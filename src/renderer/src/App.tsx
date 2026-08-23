@@ -1,34 +1,45 @@
-import Versions from './components/Versions'
-import electronLogo from './assets/electron.svg'
+import { useEffect, useState } from 'react'
+import { Button } from '@renderer/components/ui/button'
 
 function App(): React.JSX.Element {
-  const ipcHandle = (): void => window.electron.ipcRenderer.send('ping')
+  const [signalSent, setSignalSent] = useState(false)
+
+  useEffect(() => {
+    const colorScheme = window.matchMedia('(prefers-color-scheme: dark)')
+
+    const syncTheme = (event?: MediaQueryListEvent): void => {
+      document.documentElement.classList.toggle('dark', event?.matches ?? colorScheme.matches)
+    }
+
+    syncTheme()
+    colorScheme.addEventListener('change', syncTheme)
+
+    return (): void => colorScheme.removeEventListener('change', syncTheme)
+  }, [])
+
+  const ipcHandle = (): void => {
+    window.electron.ipcRenderer.send('ping')
+    setSignalSent(true)
+  }
 
   return (
-    <>
-      <img alt="logo" className="logo" src={electronLogo} />
-      <div className="creator">Powered by electron-vite</div>
-      <div className="text">
-        Build an Electron app with <span className="react">React</span>
-        &nbsp;and <span className="ts">TypeScript</span>
-      </div>
-      <p className="tip">
-        Please try pressing <code>F12</code> to open the devTool
-      </p>
-      <div className="actions">
-        <div className="action">
-          <a href="https://electron-vite.org/" target="_blank" rel="noreferrer">
-            Documentation
-          </a>
-        </div>
-        <div className="action">
-          <a target="_blank" rel="noreferrer" onClick={ipcHandle}>
-            Send IPC
-          </a>
-        </div>
-      </div>
-      <Versions></Versions>
-    </>
+    <main className="grid min-h-screen place-items-center bg-background px-6 text-foreground">
+      <section className="flex max-w-sm flex-col items-center text-center">
+        <p className="text-xs font-medium text-muted-foreground">shadcn/ui + Tailwind CSS 4</p>
+        <h1 className="mt-3 text-2xl font-semibold tracking-tight">Lightship is ready.</h1>
+        <p className="mt-2 text-sm leading-6 text-muted-foreground">
+          This simple screen uses the generated Base UI button and the existing Electron IPC bridge.
+        </p>
+
+        <Button className="mt-6" onClick={ipcHandle}>
+          {signalSent ? 'Ping sent' : 'Send IPC ping'}
+        </Button>
+
+        <p className="mt-3 min-h-4 text-xs text-muted-foreground" aria-live="polite">
+          {signalSent ? 'The main process received the signal.' : ''}
+        </p>
+      </section>
+    </main>
   )
 }
 
