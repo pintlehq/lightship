@@ -1,6 +1,9 @@
 node_modules
+.pnpm-store
 dist
 out
+test-results
+playwright-report
 .DS_Store
 .eslintcache
 *.log*

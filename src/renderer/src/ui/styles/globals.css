@@ -1,0 +1,335 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+/* Lightship typography is bundled locally so the desktop UI works offline. */
+@import '@fontsource-variable/jetbrains-mono';
+
+/* Scan this package's source for class names */
+@source "../**/*.{ts,tsx}";
+
+/* ---------------------------------------------------------------------------
+ * Base UI data-state variants (kept from the scaffold so primitives built on
+ * @base-ui/react can style their open/checked/etc. states).
+ * ------------------------------------------------------------------------- */
+@custom-variant dark (&:is(.dark *));
+
+@custom-variant data-open {
+  &:where([data-state='open']),
+  &:where([data-open]:not([data-open='false'])) {
+    @slot;
+  }
+}
+@custom-variant data-closed {
+  &:where([data-state='closed']),
+  &:where([data-closed]:not([data-closed='false'])) {
+    @slot;
+  }
+}
+@custom-variant data-checked {
+  &:where([data-state='checked']),
+  &:where([data-checked]:not([data-checked='false'])) {
+    @slot;
+  }
+}
+@custom-variant data-unchecked {
+  &:where([data-state='unchecked']),
+  &:where([data-unchecked]:not([data-unchecked='false'])) {
+    @slot;
+  }
+}
+@custom-variant data-selected {
+  &:where([data-selected='true']) {
+    @slot;
+  }
+}
+@custom-variant data-highlighted {
+  &:where([data-highlighted]) {
+    @slot;
+  }
+}
+@custom-variant data-disabled {
+  &:where([data-disabled='true']),
+  &:where([data-disabled]:not([data-disabled='false'])) {
+    @slot;
+  }
+}
+
+@utility no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * lightship design system — zinc neutrals with shadcn-style semantic tokens.
+ * Channels are space-separated RGB so `rgb(var(--x))` + Tailwind opacity
+ * modifiers (color-mix) work.  Theme switches on the `.dark` class.
+ * Brand accents use the zinc scale; warning stays warm for status semantics.
+ * ------------------------------------------------------------------------- */
+:root {
+  --background: 255 255 255;
+  --chrome: 250 250 250;
+  --card: 255 255 255;
+  --elevated: 255 255 255;
+  --hover: 244 244 245;
+  --active: 228 228 231;
+  --popover: 255 255 255;
+
+  --foreground: 9 9 11;
+  --muted: 244 244 245;
+  --muted-foreground: 113 113 122;
+  --dim: 82 82 91;
+  --faint: 161 161 170;
+
+  --border: 228 228 231;
+  --border-strong: 212 212 216;
+  --input: 228 228 231;
+  --ring: 24 24 27;
+
+  --primary: 24 24 27;
+  --primary-foreground: 250 250 250;
+  --accent: 244 244 245;
+  --accent-foreground: 24 24 27;
+  --secondary: 244 244 245;
+  --secondary-foreground: 24 24 27;
+
+  --destructive: 190 60 56;
+  --destructive-foreground: 255 255 255;
+  --success: 34 122 64;
+  --warning: 161 112 12;
+  --info: 33 99 158;
+
+  --t-50: 250 250 250;
+  --t-100: 244 244 245;
+  --t-200: 228 228 231;
+  --t-300: 212 212 216;
+  --t-400: 161 161 170;
+  --t-500: 113 113 122;
+  --t-600: 82 82 91;
+  --t-700: 63 63 70;
+  --t-800: 39 39 42;
+  --t-900: 24 24 27;
+  --t-950: 9 9 11;
+
+  --lightship-shadow-sm: 0 1px 2px rgba(9, 9, 11, 0.06);
+  --lightship-shadow-md: 0 4px 14px rgba(9, 9, 11, 0.1);
+  --lightship-shadow-lg: 0 18px 50px rgba(9, 9, 11, 0.16);
+
+  --radius: 0.5rem;
+  color-scheme: light;
+}
+
+.dark {
+  --background: 9 9 11;
+  --chrome: 24 24 27;
+  --card: 24 24 27;
+  --elevated: 39 39 42;
+  --hover: 39 39 42;
+  --active: 63 63 70;
+  --popover: 24 24 27;
+
+  --foreground: 250 250 250;
+  --muted: 39 39 42;
+  --muted-foreground: 161 161 170;
+  --dim: 113 113 122;
+  --faint: 82 82 91;
+
+  --border: 39 39 42;
+  --border-strong: 63 63 70;
+  --input: 63 63 70;
+  --ring: 212 212 216;
+
+  --primary: 250 250 250;
+  --primary-foreground: 24 24 27;
+  --accent: 39 39 42;
+  --accent-foreground: 250 250 250;
+  --secondary: 39 39 42;
+  --secondary-foreground: 250 250 250;
+
+  --destructive: 227 107 107;
+  --destructive-foreground: 28 12 12;
+  --success: 109 194 138;
+  --warning: 232 179 57;
+  --info: 123 178 232;
+
+  --t-50: 9 9 11;
+  --t-100: 24 24 27;
+  --t-200: 39 39 42;
+  --t-300: 63 63 70;
+  --t-400: 82 82 91;
+  --t-500: 113 113 122;
+  --t-600: 161 161 170;
+  --t-700: 212 212 216;
+  --t-800: 228 228 231;
+  --t-900: 244 244 245;
+  --t-950: 250 250 250;
+
+  --lightship-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --lightship-shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --lightship-shadow-lg: 0 18px 50px rgba(0, 0, 0, 0.6);
+
+  color-scheme: dark;
+}
+
+/* ---------------------------------------------------------------------------
+ * Register the tokens as Tailwind v4 theme values. `rgb(var(--x))` colours
+ * support `/opacity` modifiers via color-mix in v4 — no <alpha-value> needed.
+ * ------------------------------------------------------------------------- */
+@theme {
+  --font-sans: 'JetBrains Mono Variable', ui-monospace, Menlo, Consolas, monospace;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, Menlo, Consolas, monospace;
+
+  --color-background: rgb(var(--background));
+  --color-chrome: rgb(var(--chrome));
+  --color-card: rgb(var(--card));
+  --color-card-foreground: rgb(var(--foreground));
+  --color-elevated: rgb(var(--elevated));
+  --color-hover: rgb(var(--hover));
+  --color-active: rgb(var(--active));
+  --color-popover: rgb(var(--popover));
+  --color-popover-foreground: rgb(var(--foreground));
+
+  --color-foreground: rgb(var(--foreground));
+  --color-muted: rgb(var(--muted));
+  --color-muted-foreground: rgb(var(--muted-foreground));
+  --color-dim: rgb(var(--dim));
+  --color-faint: rgb(var(--faint));
+
+  --color-border: rgb(var(--border));
+  --color-border-strong: rgb(var(--border-strong));
+  --color-input: rgb(var(--input));
+  --color-ring: rgb(var(--ring));
+
+  --color-primary: rgb(var(--primary));
+  --color-primary-foreground: rgb(var(--primary-foreground));
+  --color-accent: rgb(var(--accent));
+  --color-accent-foreground: rgb(var(--accent-foreground));
+  --color-secondary: rgb(var(--secondary));
+  --color-secondary-foreground: rgb(var(--secondary-foreground));
+
+  --color-destructive: rgb(var(--destructive));
+  --color-destructive-foreground: rgb(var(--destructive-foreground));
+  --color-success: rgb(var(--success));
+  --color-warning: rgb(var(--warning));
+  --color-info: rgb(var(--info));
+
+  --color-t-50: rgb(var(--t-50));
+  --color-t-100: rgb(var(--t-100));
+  --color-t-200: rgb(var(--t-200));
+  --color-t-300: rgb(var(--t-300));
+  --color-t-400: rgb(var(--t-400));
+  --color-t-500: rgb(var(--t-500));
+  --color-t-600: rgb(var(--t-600));
+  --color-t-700: rgb(var(--t-700));
+  --color-t-800: rgb(var(--t-800));
+  --color-t-900: rgb(var(--t-900));
+  --color-t-950: rgb(var(--t-950));
+
+  --text-2xs: 10.5px;
+  --text-2xs--line-height: 1.3;
+  --text-xs: 11.5px;
+  --text-xs--line-height: 1.4;
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+
+  --shadow-sm: var(--lightship-shadow-sm);
+  --shadow-md: var(--lightship-shadow-md);
+  --shadow-lg: var(--lightship-shadow-lg);
+
+  --animate-pop-in: pop-in 0.16s ease-out;
+  --animate-overlay-in: overlay-in 0.14s ease-out;
+}
+
+/* ---------------------------------------------------------------------------
+ * Raw globals ported from the prototype tokens.css
+ * ------------------------------------------------------------------------- */
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    margin: 0;
+    overflow: hidden;
+    background: rgb(var(--background));
+    color: rgb(var(--foreground));
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: 'tnum', 'ss01';
+  }
+}
+
+.font-mono,
+.mono {
+  font-feature-settings: 'ss01', 'zero', 'tnum';
+}
+
+::selection {
+  background: rgb(var(--primary) / 0.22);
+}
+
+/* shadcn-style focus ring helper */
+.ring-focus:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px rgb(var(--background)),
+    0 0 0 4px rgb(var(--ring) / 0.55);
+}
+
+/* faux-desktop titlebar drag regions */
+.drag {
+  -webkit-app-region: drag;
+}
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes row-flash {
+  0% {
+    background: rgb(var(--primary) / 0.16);
+  }
+  100% {
+    background: transparent;
+  }
+}

@@ -1,5 +1,5 @@
-appId: com.electron.app
-productName: lightship
+appId: com.lightship.app
+productName: Lightship
 directories:
   buildResources: build
 files:
@@ -19,6 +19,9 @@ nsis:
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always
 mac:
+  target:
+    - dmg
+  category: public.app-category.developer-tools
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
     - NSCameraUsageDescription: Application requests access to the device's camera.
@@ -34,7 +37,7 @@ linux:
     - snap
     - deb
   maintainer: electronjs.org
-  category: Utility
+  category: Development
 appImage:
   artifactName: ${name}-${version}.${ext}
 npmRebuild: false

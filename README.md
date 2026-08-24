@@ -1,34 +1,24 @@
-# lightship
+# Lightship
 
-An Electron application with React and TypeScript
+Lightship is a focused Kubernetes desktop client built with Electron, React, and TypeScript.
 
-## Recommended IDE Setup
+It provides cluster navigation, resource inspection and editing, logs, terminals, port forwarding,
+Helm release views, activity history, and live Kubernetes watches in a compact desktop interface.
 
-- [VSCode](https://code.visualstudio.com/) + [ESLint](https://marketplace.visualstudio.com/items?itemName=dbaeumer.vscode-eslint) + [Prettier](https://marketplace.visualstudio.com/items?itemName=esbenp.prettier-vscode)
-
-## Project Setup
-
-### Install
+## Development
 
 ```bash
-$ pnpm install
+pnpm install
+pnpm dev
 ```
 
-### Development
+## Verification
 
 ```bash
-$ pnpm dev
-```
-
-### Build
-
-```bash
-# For windows
-$ pnpm build:win
-
-# For macOS
-$ pnpm build:mac
-
-# For Linux
-$ pnpm build:linux
+pnpm test
+pnpm typecheck
+pnpm lint
+pnpm build
+pnpm test:e2e
+pnpm build:unpack
 ```

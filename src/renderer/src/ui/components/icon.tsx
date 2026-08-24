@@ -1,0 +1,136 @@
+import {
+  ArrowDown,
+  ArrowRight,
+  ArrowsClockwise,
+  Bell,
+  CaretDown,
+  CaretRight,
+  CaretUpDown,
+  Check,
+  Circle,
+  ClockCounterClockwise,
+  Code,
+  Columns,
+  Command,
+  Copy,
+  Cpu,
+  Cube,
+  Database,
+  DotsThree,
+  DownloadSimple,
+  Eye,
+  File,
+  FlowArrow,
+  Folder,
+  Funnel,
+  Function as FunctionIcon,
+  Gear,
+  GitBranch,
+  HardDrive,
+  HardDrives,
+  type Icon as PhosphorIcon,
+  type IconProps,
+  Key,
+  KeyReturn,
+  Lightning,
+  LinkSimple,
+  Lock,
+  MagnifyingGlass,
+  Moon,
+  PencilSimple,
+  Play,
+  Plus,
+  Pulse,
+  PuzzlePiece,
+  Scroll,
+  ShieldCheck,
+  SidebarSimple,
+  StackSimple,
+  Star,
+  Sun,
+  Table,
+  Terminal,
+  Trash,
+  TreeStructure,
+  UploadSimple,
+  X
+} from '@phosphor-icons/react'
+
+/**
+ * Maps the design prototype's semantic icon names to Phosphor components, so the
+ * `<Icon name="…" />` call sites ported from the prototype stay unchanged while
+ * rendering Phosphor glyphs. Centralised here for easy future swapping.
+ */
+export const ICON_MAP = {
+  search: MagnifyingGlass,
+  bell: Bell,
+  settings: Gear,
+  sun: Sun,
+  moon: Moon,
+  plus: Plus,
+  pencil: PencilSimple,
+  refresh: ArrowsClockwise,
+  more: DotsThree,
+  chevronRight: CaretRight,
+  chevronDown: CaretDown,
+  chevronsUpDown: CaretUpDown,
+  box: Cube,
+  server: HardDrives,
+  database: Database,
+  table: Table,
+  columns: Columns,
+  network: TreeStructure,
+  hardDrive: HardDrive,
+  activity: Pulse,
+  layers: StackSimple,
+  shield: ShieldCheck,
+  terminal: Terminal,
+  x: X,
+  filter: Funnel,
+  play: Play,
+  lock: Lock,
+  key: Key,
+  code: Code,
+  history: ClockCounterClockwise,
+  check: Check,
+  copy: Copy,
+  download: DownloadSimple,
+  upload: UploadSimple,
+  trash: Trash,
+  eye: Eye,
+  command: Command,
+  enter: KeyReturn,
+  arrowDown: ArrowDown,
+  arrowRight: ArrowRight,
+  circle: Circle,
+  dot: Circle,
+  file: File,
+  folder: Folder,
+  gitBranch: GitBranch,
+  zap: Lightning,
+  link: LinkSimple,
+  cpu: Cpu,
+  star: Star,
+  panelRight: SidebarSimple,
+  scroll: Scroll,
+  function: FunctionIcon,
+  workflow: FlowArrow,
+  puzzle: PuzzlePiece
+} satisfies Record<string, PhosphorIcon>
+
+export type IconName = keyof typeof ICON_MAP
+
+export interface IconComponentProps extends Omit<IconProps, 'ref'> {
+  name: IconName
+}
+
+/** Sizing comes from the `className` (`w-4 h-4`), which overrides Phosphor's 1em. */
+export function Icon({
+  name,
+  className = 'w-4 h-4',
+  weight = 'regular',
+  ...rest
+}: IconComponentProps) {
+  const Glyph = ICON_MAP[name]
+  return <Glyph className={className} weight={weight} {...rest} />
+}
