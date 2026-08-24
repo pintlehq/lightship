@@ -209,7 +209,7 @@ export function ConfigDataEditor({
                     type="button"
                     title="Remove field"
                     onClick={() => removeRow(r.id)}
-                    className="shrink-0 rounded p-1 text-faint opacity-0 hover:text-destructive group-hover:opacity-100"
+                    className="shrink-0 rounded p-1 text-destructive opacity-0 transition-opacity hover:bg-destructive/10 group-hover:opacity-100 focus-visible:opacity-100"
                   >
                     <Icon name="trash" className="h-3.5 w-3.5" />
                   </button>
