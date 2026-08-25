@@ -1,5 +1,6 @@
 {
   "name": "lightship",
+  "productName": "Lightship",
   "version": "1.0.0",
   "description": "Lightship Kubernetes desktop client",
   "main": "./out/main/index.js",
