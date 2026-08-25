@@ -7,8 +7,8 @@ import { UiStateSchema } from '../../shared/ipc-types'
 import { parseOrFallback } from '../../shared/validate'
 
 // Non-sensitive renderer UI state, persisted alongside clusters.json under
-// userData/lightship. No safeStorage — there are no credentials here.
-const baseDir = () => join(app.getPath('userData'), 'lightship')
+// userData/Clusters. No safeStorage — there are no credentials here.
+const baseDir = () => join(app.getPath('userData'), 'Clusters')
 const stateFile = () => join(baseDir(), 'ui-state.json')
 
 const EMPTY: UiState = { detailTabs: {} }

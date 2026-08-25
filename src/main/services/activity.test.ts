@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 import type { ActivityInput } from '../../shared/ipc-types'
 
-// activity persists a JSON log under userData/lightship. Route Electron's
+// activity persists a JSON log under userData/Clusters. Route Electron's
 // `app.getPath` to a throwaway temp dir so the service writes to disk in tests.
 const env = vi.hoisted(() => {
   const fs = require('node:fs') as typeof import('node:fs')
@@ -18,8 +18,8 @@ vi.mock('electron', () => ({ app: { getPath: () => env.dir } }))
 // Imported after vi.mock so its (transitive) `from 'electron'` binds the stub.
 import * as activity from './activity'
 
-const lightshipDir = join(env.dir, 'lightship')
-const activityFile = join(lightshipDir, 'activity.json')
+const clustersDir = join(env.dir, 'Clusters')
+const activityFile = join(clustersDir, 'activity.json')
 
 const input = (over: Partial<ActivityInput> = {}): ActivityInput => ({
   clusterId: 'c1',
@@ -31,7 +31,7 @@ const input = (over: Partial<ActivityInput> = {}): ActivityInput => ({
 })
 
 beforeEach(() => {
-  rmSync(lightshipDir, { recursive: true, force: true })
+  rmSync(clustersDir, { recursive: true, force: true })
 })
 
 afterAll(() => rmSync(env.dir, { recursive: true, force: true }))
@@ -75,7 +75,7 @@ describe('activity', () => {
   })
 
   it('falls back to empty on a corrupt or wrong-shape file', async () => {
-    mkdirSync(lightshipDir, { recursive: true })
+    mkdirSync(clustersDir, { recursive: true })
 
     writeFileSync(activityFile, '{ not valid json', 'utf8')
     expect(await activity.readActivity()).toEqual([])

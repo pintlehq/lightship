@@ -9,8 +9,8 @@ import { parseOrFallback } from '../../shared/validate'
 import { listClusters } from './cluster-store'
 
 // Global Activity history of mutating actions, persisted alongside clusters.json /
-// ui-state.json under userData/lightship. Non-sensitive — plain JSON, no safeStorage.
-const baseDir = (): string => join(app.getPath('userData'), 'lightship')
+// ui-state.json under userData/Clusters. Non-sensitive — plain JSON, no safeStorage.
+const baseDir = (): string => join(app.getPath('userData'), 'Clusters')
 const file = (): string => join(baseDir(), 'activity.json')
 
 const EMPTY: ActivityHistory = { records: [] }

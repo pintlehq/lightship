@@ -7,10 +7,10 @@ import type { ClusterMeta } from '../../shared/ipc-types'
 import { ClusterMetaArraySchema } from '../../shared/ipc-types'
 import { parseOrFallback } from '../../shared/validate'
 
-// Persisted under userData/lightship:
+// Persisted under userData/Clusters:
 //   clusters.json                  — plaintext metadata (no secrets)
 //   clusters/<id>.kubeconfig.enc   — safeStorage-encrypted per-cluster kubeconfig
-const baseDir = () => join(app.getPath('userData'), 'lightship')
+const baseDir = () => join(app.getPath('userData'), 'Clusters')
 const clustersFile = () => join(baseDir(), 'clusters.json')
 const secretsDir = () => join(baseDir(), 'clusters')
 const secretFile = (id: string) => join(secretsDir(), `${id}.kubeconfig.enc`)

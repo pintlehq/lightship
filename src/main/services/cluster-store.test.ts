@@ -46,13 +46,13 @@ const SECRET = [
   '    token: SUPER-SECRET-TOKEN'
 ].join('\n')
 
-const lightshipDir = join(env.dir, 'lightship')
-const clustersJson = join(lightshipDir, 'clusters.json')
-const secretPath = (id: string) => join(lightshipDir, 'clusters', `${id}.kubeconfig.enc`)
+const clustersDir = join(env.dir, 'Clusters')
+const clustersJson = join(clustersDir, 'clusters.json')
+const secretPath = (id: string) => join(clustersDir, 'clusters', `${id}.kubeconfig.enc`)
 
 beforeEach(() => {
   env.encAvailable = true
-  rmSync(lightshipDir, { recursive: true, force: true })
+  rmSync(clustersDir, { recursive: true, force: true })
 })
 
 afterAll(() => rmSync(env.dir, { recursive: true, force: true }))

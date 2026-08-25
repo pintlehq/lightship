@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-// ui-state persists a small JSON file under userData/lightship. Route Electron's
+// ui-state persists a small JSON file under userData/Clusters. Route Electron's
 // `app.getPath` to a throwaway temp dir so the service writes to disk in tests.
 // No safeStorage stub — this state is non-sensitive.
 const env = vi.hoisted(() => {
@@ -17,11 +17,11 @@ vi.mock('electron', () => ({ app: { getPath: () => env.dir } }))
 // Imported after vi.mock so its top-level `from 'electron'` binds the stub.
 import * as uiState from './ui-state'
 
-const lightshipDir = join(env.dir, 'lightship')
-const stateFile = join(lightshipDir, 'ui-state.json')
+const clustersDir = join(env.dir, 'Clusters')
+const stateFile = join(clustersDir, 'ui-state.json')
 
 beforeEach(() => {
-  rmSync(lightshipDir, { recursive: true, force: true })
+  rmSync(clustersDir, { recursive: true, force: true })
 })
 
 afterAll(() => rmSync(env.dir, { recursive: true, force: true }))
@@ -42,7 +42,7 @@ describe('ui-state', () => {
   })
 
   it('falls back to the empty default on a corrupt or wrong-shape file', async () => {
-    mkdirSync(lightshipDir, { recursive: true })
+    mkdirSync(clustersDir, { recursive: true })
 
     writeFileSync(stateFile, '{ not valid json', 'utf8')
     expect(await uiState.readUiState()).toEqual({ detailTabs: {} })
