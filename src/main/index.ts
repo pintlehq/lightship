@@ -45,7 +45,7 @@ function createWindow(): void {
 
 app.whenReady().then(() => {
   // Set app user model id for windows
-  electronApp.setAppUserModelId('com.lightship.app')
+  electronApp.setAppUserModelId('app.pintle.lightship')
 
   buildAppMenu()
   registerLightshipIpc()
