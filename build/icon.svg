@@ -1,0 +1,74 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Harbor liquid glass logo</title>
+  <desc id="desc">A translucent layered liquid-glass app icon for Harbor, with a lighthouse, harbor waves, and depth highlights.</desc>
+  <defs>
+    <!-- top-left glare removed; background gradient is fully opaque to keep this area smooth with no dark/black patch -->
+    <radialGradient id="bgRadial" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(262 164) rotate(52) scale(1010)">
+      <stop offset="0" stop-color="#148EDB" stop-opacity="1"/>
+      <stop offset="0.24" stop-color="#1AA8E6" stop-opacity="1"/>
+      <stop offset="0.55" stop-color="#108AE8" stop-opacity="1"/>
+      <stop offset="1" stop-color="#041C5A"/>
+    </radialGradient>
+    <linearGradient id="glass" x1="183" y1="106" x2="843" y2="922" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.024"/>
+      <stop offset="0.32" stop-color="#B6F8FF" stop-opacity="0.34"/>
+      <stop offset="0.68" stop-color="#5DDCFF" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.30"/>
+    </linearGradient>
+    <linearGradient id="wave" x1="184" y1="650" x2="832" y2="820" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F8FFFF" stop-opacity="0.96"/>
+      <stop offset="0.44" stop-color="#85F7FF" stop-opacity="0.72"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.88"/>
+    </linearGradient>
+    <linearGradient id="tower" x1="414" y1="254" x2="612" y2="690" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="0.42" stop-color="#D9FBFF" stop-opacity="0.78"/>
+      <stop offset="1" stop-color="#86DFFF" stop-opacity="0.52"/>
+    </linearGradient>
+    <filter id="softShadow" x="-15%" y="-15%" width="130%" height="140%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="26" stdDeviation="32" flood-color="#001447" flood-opacity="0.28" result="shadow"/>
+      <feDropShadow dx="0" dy="-8" stdDeviation="18" flood-color="#FFFFFF" flood-opacity="0.08" result="topGlow"/>
+      <feMerge>
+        <feMergeNode in="shadow"/>
+        <feMergeNode in="topGlow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="frost" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="10" result="blur"/>
+      <feColorMatrix in="blur" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 .72 0"/>
+    </filter>
+    <clipPath id="clip">
+      <rect width="1024" height="1024"/>
+    </clipPath>
+  </defs>
+
+  <rect width="1024" height="1024" fill="url(#bgRadial)"/>
+  <g clip-path="url(#clip)">
+    <circle cx="776" cy="254" r="232" fill="#8DF2FF" opacity="0.20" filter="url(#frost)"/>
+    <ellipse cx="546" cy="832" rx="446" ry="236" fill="#001A7B" opacity="0.34" filter="url(#frost)"/>
+
+    <path d="M163 765C239 717 311 718 390 762C472 808 553 815 635 761C714 708 799 701 900 754V960H64V816c31-8 64-25 99-51Z" fill="#001B63" opacity="0.24"/>
+
+    <g filter="url(#softShadow)">
+      <path d="M330 654c66-48 130-48 196 0 66 48 130 48 196 0 49-36 98-45 147-28" stroke="url(#wave)" stroke-width="52" stroke-linecap="round" opacity="0.96"/>
+      <path d="M168 737c70-52 139-52 209 0 70 52 139 52 209 0 70-52 139-52 209 0" stroke="#D8FBFF" stroke-width="36" stroke-linecap="round" opacity="0.68"/>
+      <path d="M224 824c61-43 119-43 180 0 61 43 119 43 180 0 61-43 119-43 180 0" stroke="#FFFFFF" stroke-width="24" stroke-linecap="round" opacity="0.54"/>
+    </g>
+
+    <g filter="url(#softShadow)">
+      <path d="M501 212c9-16 32-16 41 0l60 106H441l60-106Z" fill="url(#tower)" opacity="0.95"/>
+      <path d="M444 318h157l42 317c5 38-24 72-62 72H464c-38 0-67-34-62-72l42-317Z" fill="url(#tower)" opacity="0.82"/>
+      <path d="M472 392h101l10 77H462l10-77Z" fill="#0A63CD" opacity="0.34"/>
+      <path d="M490 214h65v48h-65z" fill="#FFFFFF" opacity="0.82"/>
+      <path d="M405 318h236" stroke="#FFFFFF" stroke-width="24" stroke-linecap="round" opacity="0.78"/>
+      <path d="M461 708h124" stroke="#FFFFFF" stroke-width="36" stroke-linecap="round" opacity="0.70"/>
+      <path d="M523 276c-82 0-150 30-202 89" stroke="#FFFFFF" stroke-width="40" stroke-linecap="round" opacity="0.26"/>
+      <path d="M523 276c82 0 150 30 202 89" stroke="#BDF9FF" stroke-width="40" stroke-linecap="round" opacity="0.20"/>
+    </g>
+
+    <path d="M755 227c55 25 92 62 113 110" stroke="#FFFFFF" stroke-width="15" stroke-linecap="round" opacity="0.24"/>
+  </g>
+  <rect x="64" y="64" width="896" height="896" rx="216" stroke="url(#glass)" stroke-width="4"/>
+  <rect x="94" y="94" width="836" height="836" rx="190" stroke="#FFFFFF" stroke-opacity="0.06" stroke-width="3"/>
+</svg>
