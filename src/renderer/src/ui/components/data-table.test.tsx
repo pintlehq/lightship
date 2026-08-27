@@ -65,6 +65,23 @@ function SortableTable() {
 }
 
 describe('DataTable', () => {
+  it('allocates enough width for selection checkboxes and cell padding', () => {
+    render(
+      <DataTable
+        data={[{ id: '1', name: 'Ada', email: 'ada@x.io', role: 'admin' }]}
+        columns={columns}
+        enableRowSelection
+        resizableColumns
+        rowSelection={{}}
+        onRowSelectionChange={vi.fn()}
+      />
+    )
+
+    const selectionCol = screen.getByRole('table').querySelector('col')
+    expect(selectionCol).toHaveStyle({ width: '36px' })
+    expect(screen.getAllByRole('checkbox')).toHaveLength(2)
+  })
+
   it('keeps the empty state centered within the visible viewport for resizable columns', () => {
     const clientWidth = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(480)
 

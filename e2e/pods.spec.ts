@@ -7,6 +7,17 @@ test('pods list filters and opens a pod detail with sub-tabs', async ({ page }) 
   await navTo(page, 'Pods')
   await expect(page.getByText('5000 items')).toBeVisible()
 
+  const selectAll = page.locator('thead').getByRole('checkbox')
+  const [checkboxBox, clippingBox] = await Promise.all([
+    selectAll.boundingBox(),
+    selectAll.locator('..').boundingBox()
+  ])
+  expect(checkboxBox).not.toBeNull()
+  expect(clippingBox).not.toBeNull()
+  expect(checkboxBox!.x + checkboxBox!.width).toBeLessThanOrEqual(
+    clippingBox!.x + clippingBox!.width
+  )
+
   const filter = page.getByPlaceholder('Filter pods, namespace, status…')
   await filter.fill('zzzzzz')
   await expect(page.getByText('No pods found')).toBeVisible()

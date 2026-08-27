@@ -73,7 +73,7 @@ export function AppShell({
         {sidebar}
         <main
           className={cn(
-            'grid min-h-0 min-w-0 bg-card',
+            'grid min-h-0 min-w-0 bg-background',
             bottomPanel ? 'grid-rows-[36px_1fr_auto]' : 'grid-rows-[36px_1fr]'
           )}
         >

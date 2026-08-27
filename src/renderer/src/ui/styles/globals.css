@@ -122,16 +122,16 @@
 }
 
 .dark {
-  --background: 9 9 11;
-  --chrome: 24 24 27;
-  --card: 24 24 27;
-  --elevated: 39 39 42;
-  --hover: 39 39 42;
-  --active: 63 63 70;
-  --popover: 24 24 27;
+  --background: 15 15 17;
+  --chrome: 20 20 23;
+  --card: 25 25 28;
+  --elevated: 34 34 38;
+  --hover: 34 34 38;
+  --active: 48 48 54;
+  --popover: 28 28 31;
 
   --foreground: 250 250 250;
-  --muted: 39 39 42;
+  --muted: 34 34 38;
   --muted-foreground: 161 161 170;
   --dim: 113 113 122;
   --faint: 82 82 91;

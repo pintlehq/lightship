@@ -156,7 +156,7 @@ export function Tabbar({
                   : cn(
                       'border-r border-border/60 text-[13px]',
                       active
-                        ? 'bg-card text-foreground'
+                        ? 'bg-background text-foreground'
                         : 'bg-chrome text-muted-foreground hover:text-foreground'
                     )
               )}

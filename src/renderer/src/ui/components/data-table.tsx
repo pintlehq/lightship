@@ -164,8 +164,8 @@ export function DataTable<TData extends RowData>({
       id: '__select',
       enableSorting: false,
       enableResizing: false,
-      size: 32,
-      meta: { widthClassName: 'w-8' },
+      size: 36,
+      meta: { widthClassName: 'w-9' },
       header: ({ table }) => (
         <Checkbox
           checked={table.getIsAllRowsSelected()}
