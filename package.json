@@ -4,7 +4,11 @@
   "version": "1.0.0",
   "description": "Lightship Kubernetes desktop client",
   "main": "./out/main/index.js",
-  "author": "Lightship",
+  "author": {
+    "name": "Pintle Company Limited",
+    "url": "https://www.pintle.app"
+  },
+  "homepage": "https://www.pintle.app",
   "scripts": {
     "format": "prettier --write .",
     "lint": "eslint --cache .",
