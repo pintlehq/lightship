@@ -1,118 +1,120 @@
-# Lightship Engineering Handbook
+# Lightship Contributor Guide
 
 This file applies to the entire repository. Lightship is a focused Kubernetes desktop client built
-with Electron, React, and TypeScript. The project uses `pnpm`.
+with Electron, React, and TypeScript. Treat this file as the authoritative source for repository
+engineering guidance.
 
-## Working Rules
+## Working Practices
 
-- Prefix every shell command with `rtk`, including Git and `pnpm` commands.
-- Read the relevant implementation and nearby tests before editing. Follow existing repository
-  patterns when they are more specific than general framework guidance.
-- Keep changes scoped to the request. Do not modify generated output in `dist/`, `out/`, test
-  results, dependency directories, or unrelated user changes.
-- Use `pnpm`; do not introduce npm or Yarn lockfiles.
-- Do not add dependencies when the existing stack or a small local implementation is sufficient.
+- Use `pnpm` for dependencies and scripts. Do not add npm or Yarn lockfiles.
+- Read the relevant implementation and nearby tests before changing behavior. Prefer established
+  repository patterns over generic framework conventions.
+- Keep changes focused on the request and preserve unrelated work already present in the working
+  tree.
+- Do not edit generated or dependency output such as `dist/`, `out/`, `node_modules/`, test
+  results, or packaged artifacts.
+- Avoid new dependencies when the existing stack or a small local implementation is sufficient.
+- Do not run repository-wide formatting for a focused change. Format only files you touched.
 
-## Architecture and Process Boundaries
+## Process Boundaries
 
-- `src/main` is the privileged Electron process. It owns Electron integration, local persistence,
-  Kubernetes clients, logs, watches, terminals, port forwarding, Helm operations, and resource
+- `src/main` is the privileged Electron process. It owns Electron integration, persistence,
+  Kubernetes clients, watches, logs, terminals, port forwarding, Helm operations, and resource
   mutations.
-- `src/preload` is the narrow, typed context bridge. Expose only the minimum renderer-facing API
-  and preserve subscription teardown handles.
-- `src/shared` contains Zod schemas and the shared IPC types inferred from those schemas. Treat the
-  schemas as the source of truth for data crossing process boundaries.
-- `src/renderer` is the React application. It must remain browser-safe for tests and mock-backed
-  development, with no direct access to Node.js, Electron, the filesystem, or Kubernetes clients.
-- `e2e` contains Playwright tests that run the renderer through the Vite E2E seam without Electron
-  or a real Kubernetes cluster.
+- `src/preload` is the narrow, typed context bridge. Expose only the renderer capabilities that are
+  required, and preserve teardown handles for subscriptions.
+- `src/shared` owns Zod schemas and schema-derived IPC types. These schemas are the source of truth
+  for values that cross process boundaries.
+- `src/renderer` is the browser-safe React application. It must not directly access Node.js,
+  Electron, the filesystem, or Kubernetes clients.
+- `e2e` contains Playwright journeys that exercise the renderer through its Vite testing seam,
+  without Electron or a real Kubernetes cluster.
 
-Do not bypass these boundaries for convenience. Privileged behavior belongs in main-process
-services and reaches the renderer only through the typed preload API.
+Privileged behavior belongs in main-process services and reaches the renderer only through the
+typed preload API.
 
-## IPC Contract Changes
+## IPC Changes
 
-Implement IPC additions or changes in this order:
+Implement an IPC contract change in this order:
 
-1. Add or update the Zod input/output schemas and inferred types in `src/shared/ipc-types.ts`.
-2. Implement the privileged behavior in an appropriate `src/main/services` module.
-3. Register a main-process handler in `src/main/ipc.ts` using `parseArgs` and
+1. Add or update the Zod input and output schemas and inferred types in
+   `src/shared/ipc-types.ts`.
+2. Implement privileged behavior in the appropriate `src/main/services` module.
+3. Register the main-process handler in `src/main/ipc.ts` with `parseArgs` and
    `registerInvokeHandler`.
-4. Expose the operation through the typed bridge in `src/preload/index.ts` and the corresponding
-   `LightshipApi` contract.
-5. Add the browser-safe renderer facade in `src/renderer/src/lib/ipc.ts`, then connect it through
-   fetchers, queries, mutations, and views as appropriate.
-6. Add focused contract, service, renderer, and E2E coverage for the behavior changed.
+4. Expose the smallest required operation from `src/preload/index.ts` and the `LightshipApi`
+   contract.
+5. Add the browser-safe facade in `src/renderer/src/lib/ipc.ts`, then connect queries, mutations,
+   hooks, and views as needed.
+6. Add focused coverage at the contract, service, renderer, and E2E layers affected by the change.
 
-All renderer-supplied data is untrusted. Validate every argument before it reaches a service and
-validate every returned DTO before it crosses back to the renderer. Streaming APIs must subscribe
-before starting work, use collision-safe subscription IDs, and expose deterministic teardown.
+Treat renderer input as untrusted. Validate arguments before they reach a service and validate
+returned DTOs before they cross back to the renderer. Streaming operations must subscribe before
+starting work, use collision-safe subscription identifiers, and provide deterministic teardown.
 
 ## Renderer Conventions
 
-- Use TanStack Query for Kubernetes, cluster, and other backend-owned state. Define query keys in
-  the central query-key module and explicitly invalidate every affected cache after mutations.
-- Use Zustand only for local UI state such as tabs, filters, panels, and preferences. Do not mirror
+- Use TanStack Query for Kubernetes, cluster, and other backend-owned state. Define keys in the
+  central query-key module and explicitly invalidate every affected query after mutations.
+- Use Zustand only for local UI state such as tabs, filters, panels, and preferences. Do not copy
   query-owned server data into a store.
-- Keep browser fallbacks explicit and read-only. When `window.api` is unavailable, reads may use the
-  established mock data or safe empty values; mutations must not pretend to succeed.
-- Clean up watches, log streams, terminal sessions, port forwards, event listeners, timers, and
-  other subscriptions when their owning component or hook is disposed.
-- Reuse primitives from `src/renderer/src/ui/components` and existing view patterns before adding a
+- Keep browser fallbacks explicit and read-only. Reads may use established mock data or safe empty
+  values when `window.api` is unavailable; mutations must report that they are unavailable.
+- Dispose watches, log streams, terminal sessions, port forwards, listeners, timers, and other
+  subscriptions with their owning component or hook.
+- Reuse primitives from `src/renderer/src/ui/components` and nearby view patterns before creating a
   new abstraction.
-- Use semantic design tokens from the renderer styles instead of hard-coded theme colors. Preserve
-  light and dark themes, keyboard access, visible focus states, and accessible labels.
-- Route user-facing failures through the established error helpers and toaster. Avoid silently
-  swallowing rejected IPC calls.
+- Use semantic design tokens instead of hard-coded theme colors. Preserve light and dark themes,
+  keyboard navigation, visible focus, accessible names, and readable contrast.
+- Route user-facing failures through the established error helpers and toaster. Do not silently
+  swallow rejected IPC calls.
 
 ## Kubernetes Safety
 
-- Preserve confirmation steps for delete, drain, apply, and other destructive or disruptive
-  operations. New destructive actions require an explicit confirmation path.
-- Preserve protected-resource checks and namespace/resource identity throughout validation,
+- Keep explicit confirmation flows for delete, drain, apply, and other destructive or disruptive
+  actions. New destructive operations require confirmation before execution.
+- Preserve protected-resource checks and namespace/resource identity through validation,
   confirmation, execution, cache invalidation, and activity recording.
 - Validate Kubernetes names, selectors, replica counts, YAML, resource references, and other
-  structured input at the boundary closest to untrusted input.
-- Record both success and failure outcomes for user-initiated mutations in activity history.
-- Invalidate or update all affected queries after a mutation; do not rely on polling to repair stale
-  UI state.
-- Treat cancellation and teardown as normal lifecycle events for logs, watches, terminals, and port
-  forwards. Do not report deliberate aborts as unexpected failures.
-- Tests must not access the user's kubeconfig or require a real Kubernetes cluster unless they are
-  explicitly named and documented as integration tests.
+  structured input at the boundary closest to the user.
+- Record both successful and failed user-initiated mutations in activity history.
+- Invalidate or update every affected query after a mutation; do not rely on polling to repair stale
+  state.
+- Treat intentional cancellation and teardown as normal lifecycle events for logs, watches,
+  terminals, and port forwards.
+- Unit, renderer, and E2E tests must not read the user's kubeconfig or require a real cluster.
+  Cluster-backed tests must be explicitly named and documented as integration tests.
 
-## Code Style
+## TypeScript and Style
 
-- Use two-space indentation, single quotes, no semicolons, and a 100-column print-width preference,
-  as configured by EditorConfig and Prettier.
-- Keep TypeScript types precise. Avoid `any`, unchecked casts, duplicated hand-written versions of
-  schema-derived types, and non-null assertions unless the invariant is local and evident.
-- Prefer small pure helpers for mapping and validation, and keep Electron/Kubernetes side effects at
+- Use two-space indentation, single quotes, no semicolons, and the configured 100-column formatting
+  preference.
+- Keep types precise. Avoid `any`, unchecked casts, duplicated hand-written versions of
+  schema-derived types, and non-null assertions without a clear local invariant.
+- Prefer small pure helpers for mapping and validation. Keep Electron and Kubernetes side effects at
   service boundaries.
-- Add comments for non-obvious lifecycle, process-boundary, validation, or cleanup behavior. Do not
-  narrate code that is already self-explanatory.
-- Keep tests next to the implementation as `*.test.ts` or `*.test.tsx`; keep full user journeys in
-  `e2e/*.spec.ts`.
+- Comment non-obvious lifecycle, validation, cleanup, or process-boundary behavior. Do not narrate
+  self-explanatory code.
+- Place focused tests next to implementations as `*.test.ts` or `*.test.tsx`; keep complete user
+  journeys in `e2e/*.spec.ts`.
 
 ## Verification
 
-Run focused Vitest coverage while developing and add a regression test for every bug fix. Before
-completing a normal code change, run:
+Run focused checks while developing and add a regression test for every bug fix. Before completing a
+normal code change, run:
 
 ```bash
-rtk pnpm typecheck
-rtk pnpm test
-rtk pnpm lint
+pnpm typecheck
+pnpm test
+pnpm lint
 ```
 
-Also run the checks required by the change:
+Run additional checks based on the affected surface:
 
-- User-visible renderer workflow: `rtk pnpm test:e2e`, or the narrow relevant Playwright spec while
-  iterating followed by the full suite before completion.
-- IPC, preload, build configuration, or cross-process change: `rtk pnpm build`.
-- Electron packaging, native dependency, icon, entitlement, or builder configuration change:
-  `rtk pnpm build:unpack`.
+- User-visible renderer workflows: run the relevant Playwright spec while iterating, then
+  `pnpm test:e2e` before completion.
+- IPC, preload, shared contracts, or build configuration: run `pnpm build`.
+- Packaging, native dependencies, icons, entitlements, or builder configuration: run
+  `pnpm build:unpack`.
 
-Do not use `pnpm format` as a blanket cleanup for a focused task because it rewrites the repository.
-Format only touched files when needed. If a required check cannot run, report the exact command and
-reason instead of claiming verification.
+If a required command cannot run, report the exact command and reason instead of claiming it passed.
