@@ -1,5 +1,6 @@
-import type { ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Button } from '@renderer/ui/components/button'
+import { Input } from '@renderer/ui/components/input'
 import { Overlay } from '@renderer/ui/components/overlay'
 import { Progress } from '@renderer/ui/components/progress'
 
@@ -11,6 +12,7 @@ export function ConfirmDialog({
   danger,
   busy,
   progress,
+  confirmationText,
   onConfirm,
   onCancel
 }: {
@@ -21,9 +23,12 @@ export function ConfirmDialog({
   danger?: boolean
   busy?: boolean
   progress?: { label: string; done: number; total: number }
+  confirmationText?: string
   onConfirm: () => void
   onCancel: () => void
 }) {
+  const [typed, setTyped] = useState('')
+  useEffect(() => setTyped(''), [open, confirmationText])
   if (!open) return null
   return (
     <Overlay open={open} onClose={onCancel}>
@@ -33,6 +38,18 @@ export function ConfirmDialog({
           <div className="mt-2 font-mono text-[12.5px] leading-relaxed text-muted-foreground">
             {message}
           </div>
+          {confirmationText && (
+            <label className="mt-4 block font-mono text-[12px] text-muted-foreground">
+              Type <span className="font-semibold text-foreground">{confirmationText}</span> to
+              confirm
+              <Input
+                className="mt-1.5"
+                value={typed}
+                onChange={(event) => setTyped(event.target.value)}
+                autoFocus
+              />
+            </label>
+          )}
           {progress && progress.total > 1 && (
             <div className="mt-4">
               <div className="flex items-center justify-between font-mono text-[12px] text-dim">
@@ -49,7 +66,11 @@ export function ConfirmDialog({
           <Button variant="outline" onClick={onCancel} disabled={busy}>
             Cancel
           </Button>
-          <Button variant={danger ? 'destructive' : 'default'} onClick={onConfirm} disabled={busy}>
+          <Button
+            variant={danger ? 'destructive' : 'default'}
+            onClick={onConfirm}
+            disabled={busy || (!!confirmationText && typed !== confirmationText)}
+          >
             {busy ? 'Working…' : confirmLabel}
           </Button>
         </div>

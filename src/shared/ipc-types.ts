@@ -66,6 +66,152 @@ export const NodeRowSchema = z.object({
 export type NodeRow = z.infer<typeof NodeRowSchema>
 export const NodeRowArraySchema = z.array(NodeRowSchema)
 
+const DNS_1123_LABEL = /^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$/
+const LABEL_NAME = /^[A-Za-z0-9](?:[-_.A-Za-z0-9]{0,61}[A-Za-z0-9])?$/
+
+export function isValidNamespaceName(value: string): boolean {
+  return value.length <= 63 && DNS_1123_LABEL.test(value)
+}
+
+export function isValidLabelKey(value: string): boolean {
+  const slash = value.indexOf('/')
+  const prefix = slash === -1 ? undefined : value.slice(0, slash)
+  const name = slash === -1 ? value : value.slice(slash + 1)
+  if (!name || name.length > 63 || !LABEL_NAME.test(name)) return false
+  if (prefix === undefined) return true
+  if (!prefix || prefix.length > 253) return false
+  return prefix.split('.').every((part) => DNS_1123_LABEL.test(part))
+}
+
+export function isValidLabelValue(value: string): boolean {
+  return value === '' || (value.length <= 63 && LABEL_NAME.test(value))
+}
+
+export const NamespaceNameSchema = z
+  .string()
+  .refine(
+    isValidNamespaceName,
+    'Use a valid RFC 1123 namespace name (lowercase letters, numbers, and hyphens).'
+  )
+
+export const NamespaceAccessSchema = z.object({
+  available: z.boolean(),
+  message: z.string().optional()
+})
+export type NamespaceAccess = z.infer<typeof NamespaceAccessSchema>
+
+export const NamespaceOptionalAccessSchema = z.object({
+  pods: NamespaceAccessSchema,
+  quotas: NamespaceAccessSchema,
+  limits: NamespaceAccessSchema,
+  policies: NamespaceAccessSchema
+})
+export type NamespaceOptionalAccess = z.infer<typeof NamespaceOptionalAccessSchema>
+
+export const NamespaceSummarySchema = z.object({
+  name: z.string(),
+  uid: z.string(),
+  status: z.enum(['Active', 'Terminating', 'Unknown']),
+  created: z.string(),
+  age: z.string(),
+  protected: z.boolean(),
+  podsReady: z.number().int().nonnegative().nullable(),
+  podsTotal: z.number().int().nonnegative().nullable(),
+  quotaCount: z.number().int().nonnegative().nullable(),
+  limitRangeCount: z.number().int().nonnegative().nullable(),
+  networkPolicyCount: z.number().int().nonnegative().nullable(),
+  defaultDenyIngress: z.boolean().nullable(),
+  defaultDenyEgress: z.boolean().nullable()
+})
+export type NamespaceSummary = z.infer<typeof NamespaceSummarySchema>
+
+export const NamespaceSummaryListSchema = z.object({
+  items: z.array(NamespaceSummarySchema),
+  access: NamespaceOptionalAccessSchema
+})
+export type NamespaceSummaryList = z.infer<typeof NamespaceSummaryListSchema>
+
+export const NamespaceQuotaResourceSchema = z.object({
+  resource: z.string(),
+  used: z.string(),
+  hard: z.string(),
+  percent: z.number().nullable()
+})
+export type NamespaceQuotaResource = z.infer<typeof NamespaceQuotaResourceSchema>
+
+export const NamespaceQuotaSchema = z.object({
+  name: z.string(),
+  scopes: z.array(z.string()),
+  resources: z.array(NamespaceQuotaResourceSchema)
+})
+export type NamespaceQuota = z.infer<typeof NamespaceQuotaSchema>
+
+export const NamespaceLimitItemSchema = z.object({
+  type: z.string(),
+  min: z.record(z.string(), z.string()),
+  max: z.record(z.string(), z.string()),
+  default: z.record(z.string(), z.string()),
+  defaultRequest: z.record(z.string(), z.string()),
+  maxLimitRequestRatio: z.record(z.string(), z.string())
+})
+export type NamespaceLimitItem = z.infer<typeof NamespaceLimitItemSchema>
+
+export const NamespaceLimitRangeSchema = z.object({
+  name: z.string(),
+  limits: z.array(NamespaceLimitItemSchema)
+})
+export type NamespaceLimitRange = z.infer<typeof NamespaceLimitRangeSchema>
+
+export const NamespaceNetworkPolicySchema = z.object({
+  name: z.string(),
+  selector: z.string(),
+  policyTypes: z.array(z.string()),
+  ingressRules: z.number().int().nonnegative(),
+  egressRules: z.number().int().nonnegative(),
+  defaultDenyIngress: z.boolean(),
+  defaultDenyEgress: z.boolean()
+})
+export type NamespaceNetworkPolicy = z.infer<typeof NamespaceNetworkPolicySchema>
+
+export const NamespacePodStatesSchema = z.object({
+  total: z.number().int().nonnegative(),
+  ready: z.number().int().nonnegative(),
+  running: z.number().int().nonnegative(),
+  pending: z.number().int().nonnegative(),
+  succeeded: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+  unknown: z.number().int().nonnegative()
+})
+export type NamespacePodStates = z.infer<typeof NamespacePodStatesSchema>
+
+export const NamespaceDetailSchema = z.object({
+  summary: NamespaceSummarySchema,
+  labels: z.record(z.string(), z.string()),
+  annotations: z.record(z.string(), z.string()),
+  finalizers: z.array(z.string()),
+  podStates: NamespacePodStatesSchema.nullable(),
+  quotas: z.array(NamespaceQuotaSchema).nullable(),
+  limitRanges: z.array(NamespaceLimitRangeSchema).nullable(),
+  networkPolicies: z.array(NamespaceNetworkPolicySchema).nullable(),
+  access: NamespaceOptionalAccessSchema
+})
+export type NamespaceDetail = z.infer<typeof NamespaceDetailSchema>
+
+const NamespaceLabelsSchema = z.record(z.string(), z.string()).superRefine((labels, ctx) => {
+  for (const [key, value] of Object.entries(labels)) {
+    if (!isValidLabelKey(key))
+      ctx.addIssue({ code: 'custom', message: `Invalid label key: ${key}` })
+    if (!isValidLabelValue(value))
+      ctx.addIssue({ code: 'custom', message: `Invalid label value for ${key}` })
+  }
+})
+
+export const NamespaceCreateInputSchema = z.discriminatedUnion('mode', [
+  z.object({ mode: z.literal('form'), name: NamespaceNameSchema, labels: NamespaceLabelsSchema }),
+  z.object({ mode: z.literal('yaml'), yaml: z.string().min(1) })
+])
+export type NamespaceCreateInput = z.infer<typeof NamespaceCreateInputSchema>
+
 /** One `status.addresses[]` entry of a node. */
 export const NodeAddressSchema = z.object({ type: z.string(), address: z.string() })
 export type NodeAddress = z.infer<typeof NodeAddressSchema>
@@ -466,6 +612,10 @@ export interface LightshipApi {
     overview(id: string): Promise<ClusterOverview>
     overviewBundle(id: string): Promise<OverviewBundle>
     nodes(id: string): Promise<NodeRow[]>
+    namespaceSummaries(id: string): Promise<NamespaceSummaryList>
+    namespaceDetail(id: string, name: string): Promise<NamespaceDetail>
+    createNamespace(id: string, input: NamespaceCreateInput): Promise<void>
+    deleteNamespace(id: string, name: string): Promise<void>
     /** Full detail for one node (properties tab of the node detail view). */
     nodeDetail(id: string, name: string): Promise<NodeDetail>
     /** Recent events (newest first) — cluster-wide, or scoped to `ref` if given. */

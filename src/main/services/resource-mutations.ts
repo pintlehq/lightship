@@ -4,6 +4,7 @@ import { canRestartResource, canScaleResource } from '../../shared/resource-capa
 import type { ResourceRef } from '../../shared/ipc-types'
 import { kcForCluster, loadK8s } from './k8s'
 import { GVK, resolveGvk } from './resource-gvk'
+import { isNamespaceProtected } from './namespaces'
 
 export async function objectApi(clusterId: string) {
   const { KubernetesObjectApi } = await loadK8s()
@@ -11,6 +12,9 @@ export async function objectApi(clusterId: string) {
 }
 
 export async function deleteResource(clusterId: string, ref: ResourceRef): Promise<void> {
+  if (ref.kind === 'namespaces' && isNamespaceProtected(ref.name)) {
+    throw new Error(`Namespace ${ref.name} is protected and cannot be deleted`)
+  }
   const gvk = GVK[ref.kind]
   if (!gvk) throw new Error(`Unknown resource kind: ${ref.kind}`)
   const obj = await objectApi(clusterId)

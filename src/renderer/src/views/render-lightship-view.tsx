@@ -13,6 +13,8 @@ import { LogsPane } from './logs-pane'
 import { ManageClustersView } from './manage-clusters-view'
 import { NodeDetailView } from './node-detail-view'
 import { NodesView } from './nodes-view'
+import { NamespacesView } from './namespaces-view'
+import { NamespaceDetailView } from './namespace-detail-view'
 import { OverviewView } from './overview-view'
 import { PodDetailView } from './pod-detail-view'
 import { PodsView } from './pods-view'
@@ -30,6 +32,8 @@ export function renderLightshipView({
   onOpenLogs,
   onExec,
   onOpenNode,
+  onOpenNamespace,
+  onOpenNamespacedResource,
   onOpenResource,
   onOpenWorkloadLogs,
   onOpenCrdInstance,
@@ -42,6 +46,13 @@ export function renderLightshipView({
   onOpenLogs: (clusterId: string, pods: Pod[], container?: string) => void
   onExec: (clusterId: string, pod: Pod, container?: string) => void
   onOpenNode: (clusterId: string, node: NodeRow) => void
+  onOpenNamespace: (clusterId: string, name: string) => void
+  onOpenNamespacedResource: (
+    clusterId: string,
+    resourceId: string,
+    label: string,
+    namespace: string
+  ) => void
   onOpenResource: (clusterId: string, resourceId: string, row: ResourceRow) => void
   onOpenWorkloadLogs: (clusterId: string, resourceId: string, row: ResourceRow) => void
   onOpenCrdInstance: (
@@ -71,6 +82,26 @@ export function renderLightshipView({
         <NodesView
           clusterId={view.clusterId}
           onOpenNode={(node) => onOpenNode(view.clusterId, node)}
+        />
+      )
+    case 'namespaces':
+      return (
+        <NamespacesView
+          clusterId={view.clusterId}
+          onOpenNamespace={(name) => onOpenNamespace(view.clusterId, name)}
+          onOpenResource={(resourceId, label, namespace) =>
+            onOpenNamespacedResource(view.clusterId, resourceId, label, namespace)
+          }
+        />
+      )
+    case 'namespace-detail':
+      return (
+        <NamespaceDetailView
+          clusterId={view.clusterId}
+          name={view.name}
+          onOpenResource={(resourceId, label, namespace) =>
+            onOpenNamespacedResource(view.clusterId, resourceId, label, namespace)
+          }
         />
       )
     case 'node-detail':

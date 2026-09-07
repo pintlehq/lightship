@@ -3,6 +3,10 @@ import type { CustomResourceParams, ResourceRef } from '../../../shared/ipc-type
 export const qk = {
   pods: (clusterId?: string | null) => ['pods', clusterId ?? null] as const,
   nodes: (clusterId?: string | null) => ['nodes', clusterId ?? null] as const,
+  namespaceSummaries: (clusterId?: string | null) =>
+    ['namespace-summaries', clusterId ?? null] as const,
+  namespaceDetail: (clusterId: string | null, name: string) =>
+    ['namespace-detail', clusterId ?? null, name] as const,
   nodeDetail: (clusterId: string | null, name: string) =>
     ['node-detail', clusterId ?? null, name] as const,
   overview: (clusterId?: string | null) => ['overview', clusterId ?? null] as const,

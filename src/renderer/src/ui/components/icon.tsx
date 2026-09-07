@@ -53,6 +53,7 @@ import {
   Trash,
   TreeStructure,
   UploadSimple,
+  Warning,
   X
 } from '@phosphor-icons/react'
 
@@ -115,7 +116,8 @@ export const ICON_MAP = {
   scroll: Scroll,
   function: FunctionIcon,
   workflow: FlowArrow,
-  puzzle: PuzzlePiece
+  puzzle: PuzzlePiece,
+  alertTriangle: Warning
 } satisfies Record<string, PhosphorIcon>
 
 export type IconName = keyof typeof ICON_MAP

@@ -8,6 +8,7 @@ export const NAV_ICON: Record<string, IconName> = {
   overview: 'activity',
   pods: 'box',
   nodes: 'server',
+  namespaces: 'folder',
   events: 'bell',
   helm: 'zap',
   rbac: 'shield',
@@ -39,6 +40,7 @@ export function lightshipViewForNav(id: string, label: string, clusterId: string
   if (id === 'overview') return { kind: 'overview', clusterId }
   if (id === 'pods') return { kind: 'pods', clusterId }
   if (id === 'nodes') return { kind: 'nodes', clusterId }
+  if (id === 'namespaces') return { kind: 'namespaces', clusterId }
   if (id === 'port-forwards') return { kind: 'port-forwards' }
   if (id === 'helm') return { kind: 'helm', clusterId }
   if (isResourceId(id)) return { kind: 'resource', clusterId, resourceId: id, label }

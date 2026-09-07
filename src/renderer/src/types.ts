@@ -68,6 +68,8 @@ export const LightshipViewSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('overview'), clusterId: z.string() }),
   z.object({ kind: z.literal('pods'), clusterId: z.string() }),
   z.object({ kind: z.literal('nodes'), clusterId: z.string() }),
+  z.object({ kind: z.literal('namespaces'), clusterId: z.string() }),
+  z.object({ kind: z.literal('namespace-detail'), clusterId: z.string(), name: z.string() }),
   z.object({ kind: z.literal('node-detail'), clusterId: z.string(), node: NodeRowSchema }),
   z.object({ kind: z.literal('pod'), clusterId: z.string(), pod: PodSchema }),
   z.object({ kind: z.literal('clusters') }),

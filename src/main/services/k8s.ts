@@ -489,12 +489,15 @@ export async function listEvents(clusterId: string, ref?: ResourceRef): Promise<
   const kc = await kcForCluster(clusterId)
   const { CoreV1Api } = await loadK8s()
   const core = kc.makeApiClient(CoreV1Api)
-  const res = ref
-    ? await core.listNamespacedEvent({
-        namespace: ref.namespace ?? 'default',
-        fieldSelector: `involvedObject.name=${ref.name}`
-      })
-    : await core.listEventForAllNamespaces()
+  const res =
+    ref?.kind === 'namespaces'
+      ? await core.listNamespacedEvent({ namespace: ref.name })
+      : ref
+        ? await core.listNamespacedEvent({
+            namespace: ref.namespace ?? 'default',
+            fieldSelector: `involvedObject.name=${ref.name}`
+          })
+        : await core.listEventForAllNamespaces()
   const at = (e: (typeof res.items)[number]): number => {
     const ts = e.lastTimestamp ?? e.eventTime ?? e.metadata?.creationTimestamp
     return ts ? new Date(ts).getTime() : 0

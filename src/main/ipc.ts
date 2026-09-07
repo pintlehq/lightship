@@ -22,6 +22,9 @@ import {
   ResourceDetailSchema,
   NodeDetailSchema,
   NodeRowArraySchema,
+  NamespaceCreateInputSchema,
+  NamespaceDetailSchema,
+  NamespaceSummaryListSchema,
   PodArraySchema,
   ResourceRefSchema,
   ResourceRowArraySchema,
@@ -32,6 +35,7 @@ import * as activity from './services/activity'
 import * as store from './services/cluster-store'
 import * as k8s from './services/k8s'
 import * as logs from './services/logs'
+import * as namespaces from './services/namespaces'
 import * as portForward from './services/port-forward'
 import * as helm from './services/helm'
 import * as pty from './services/pty'
@@ -95,6 +99,27 @@ export function registerLightshipIpc(): void {
   )
   registerInvokeHandler('cluster:nodes', parseArgs(Id), NodeRowArraySchema, (_e, id) =>
     k8s.listNodes(id)
+  )
+  registerInvokeHandler(
+    'cluster:namespaceSummaries',
+    parseArgs(Id),
+    NamespaceSummaryListSchema,
+    (_e, id) => namespaces.listNamespaceSummaries(id)
+  )
+  registerInvokeHandler(
+    'cluster:namespaceDetail',
+    parseArgs(Id, Id),
+    NamespaceDetailSchema,
+    (_e, id, name) => namespaces.getNamespaceDetail(id, name)
+  )
+  registerInvokeHandler(
+    'cluster:createNamespace',
+    parseArgs(Id, NamespaceCreateInputSchema),
+    z.void(),
+    (_e, id, input) => namespaces.createNamespace(id, input)
+  )
+  registerInvokeHandler('cluster:deleteNamespace', parseArgs(Id, Id), z.void(), (_e, id, name) =>
+    namespaces.deleteNamespace(id, name)
   )
   registerInvokeHandler('cluster:nodeDetail', parseArgs(Id, Id), NodeDetailSchema, (_e, id, name) =>
     k8s.getNodeDetail(id, name)

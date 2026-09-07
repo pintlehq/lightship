@@ -15,6 +15,9 @@ import type {
   LogStreamOptions,
   NodeDetail,
   NodeRow,
+  NamespaceCreateInput,
+  NamespaceDetail,
+  NamespaceSummaryList,
   OverviewBundle,
   Pod,
   PortForwardEvent,
@@ -88,6 +91,14 @@ export const clusterApi = {
   overview: (id: string): Promise<ClusterOverview> => api()!.cluster.overview(id),
   overviewBundle: (id: string): Promise<OverviewBundle> => api()!.cluster.overviewBundle(id),
   nodes: (id: string): Promise<NodeRow[]> => api()!.cluster.nodes(id),
+  namespaceSummaries: (id: string): Promise<NamespaceSummaryList> =>
+    api()!.cluster.namespaceSummaries(id),
+  namespaceDetail: (id: string, name: string): Promise<NamespaceDetail> =>
+    api()!.cluster.namespaceDetail(id, name),
+  createNamespace: (id: string, input: NamespaceCreateInput): Promise<void> =>
+    api()!.cluster.createNamespace(id, input),
+  deleteNamespace: (id: string, name: string): Promise<void> =>
+    api()!.cluster.deleteNamespace(id, name),
   nodeDetail: (id: string, name: string): Promise<NodeDetail> =>
     api()!.cluster.nodeDetail(id, name),
   events: (id: string, ref?: ResourceRef): Promise<ClusterEvent[]> =>

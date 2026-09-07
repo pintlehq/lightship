@@ -3,6 +3,9 @@ import type {
   ClusterOverview,
   ConfigData,
   NodeDetail,
+  NamespaceCreateInput,
+  NamespaceDetail,
+  NamespaceSummaryList,
   OverviewBundle,
   ResourceDetail,
   ResourceRef,
@@ -127,6 +130,131 @@ export async function fetchNodeDetail(clusterId: string | null, name: string): P
   }
   await delay(80)
   return mockNodeDetail(name)
+}
+
+const MOCK_NAMESPACES: NamespaceSummaryList = {
+  access: {
+    pods: { available: true },
+    quotas: { available: true },
+    limits: { available: true },
+    policies: { available: true }
+  },
+  items: [
+    ['default', 12, 12, 1, 1, 2],
+    ['checkout', 18, 17, 2, 1, 3],
+    ['payments', 9, 8, 1, 1, 2],
+    ['kube-system', 24, 24, 0, 0, 1]
+  ].map(([name, total, ready, quota, limits, policies]) => ({
+    name: String(name),
+    uid: `mock-${name}`,
+    status: 'Active' as const,
+    created: new Date(Date.now() - Number(total) * 86400_000).toISOString(),
+    age: `${total}d`,
+    protected: name === 'default' || String(name).startsWith('kube-'),
+    podsReady: Number(ready),
+    podsTotal: Number(total),
+    quotaCount: Number(quota),
+    limitRangeCount: Number(limits),
+    networkPolicyCount: Number(policies),
+    defaultDenyIngress: Number(policies) > 0,
+    defaultDenyEgress: Number(policies) > 1
+  }))
+}
+
+export async function fetchNamespaceSummaries(
+  clusterId: string | null
+): Promise<NamespaceSummaryList> {
+  if (hasBackend()) {
+    if (!clusterId) throw new Error('No active cluster')
+    return clusterApi.namespaceSummaries(clusterId)
+  }
+  await delay(80)
+  return MOCK_NAMESPACES
+}
+
+export async function fetchNamespaceDetail(
+  clusterId: string | null,
+  name: string
+): Promise<NamespaceDetail> {
+  if (hasBackend()) {
+    if (!clusterId) throw new Error('No active cluster')
+    return clusterApi.namespaceDetail(clusterId, name)
+  }
+  await delay(80)
+  const summary =
+    MOCK_NAMESPACES.items.find((item) => item.name === name) ?? MOCK_NAMESPACES.items[0]
+  return {
+    summary: { ...summary, name },
+    labels: { team: name, environment: 'production' },
+    annotations: { 'lightship.dev/example': 'Browser-mode mock data' },
+    finalizers: ['kubernetes'],
+    podStates: {
+      total: summary.podsTotal ?? 0,
+      ready: summary.podsReady ?? 0,
+      running: summary.podsReady ?? 0,
+      pending: 1,
+      succeeded: 0,
+      failed: 0,
+      unknown: 0
+    },
+    quotas: [
+      {
+        name: 'compute',
+        scopes: [],
+        resources: [
+          { resource: 'requests.cpu', used: '2', hard: '4', percent: 50 },
+          { resource: 'requests.memory', used: '4Gi', hard: '8Gi', percent: 50 }
+        ]
+      }
+    ],
+    limitRanges: [
+      {
+        name: 'defaults',
+        limits: [
+          {
+            type: 'Container',
+            min: {},
+            max: { cpu: '2', memory: '2Gi' },
+            default: { cpu: '500m', memory: '512Mi' },
+            defaultRequest: { cpu: '100m', memory: '128Mi' },
+            maxLimitRequestRatio: {}
+          }
+        ]
+      }
+    ],
+    networkPolicies: [
+      {
+        name: 'default-deny-ingress',
+        selector: '<all pods>',
+        policyTypes: ['Ingress'],
+        ingressRules: 0,
+        egressRules: 0,
+        defaultDenyIngress: true,
+        defaultDenyEgress: false
+      }
+    ],
+    access: MOCK_NAMESPACES.access
+  }
+}
+
+export async function createNamespaceResource(
+  clusterId: string | null,
+  input: NamespaceCreateInput
+): Promise<void> {
+  if (!hasBackend())
+    throw new Error('Backend unavailable — run inside the Electron app to create namespaces')
+  if (!clusterId) throw new Error('No active cluster')
+  return clusterApi.createNamespace(clusterId, input)
+}
+
+export async function deleteNamespaceResource(
+  clusterId: string | null,
+  name: string
+): Promise<void> {
+  if (!hasBackend())
+    throw new Error('Backend unavailable — run inside the Electron app to delete namespaces')
+  if (!clusterId) throw new Error('No active cluster')
+  return clusterApi.deleteNamespace(clusterId, name)
 }
 
 export async function fetchOverview(clusterId: string | null): Promise<ClusterOverview> {

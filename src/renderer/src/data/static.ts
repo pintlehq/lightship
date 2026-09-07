@@ -4,6 +4,7 @@ import type { LightshipTreeNode, Cluster, KubeEvent, ManageClusterRow } from '..
 export const LIGHTSHIP_TREE: LightshipTreeNode[] = [
   { type: 'item', icon: 'activity', label: 'Overview', id: 'overview' },
   { type: 'item', icon: 'server', label: 'Nodes', id: 'nodes', count: 12 },
+  { type: 'item', icon: 'folder', label: 'Namespaces', id: 'namespaces' },
   {
     type: 'group',
     icon: 'box',

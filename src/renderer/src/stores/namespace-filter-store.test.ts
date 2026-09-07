@@ -31,6 +31,15 @@ describe('namespace-filter-store', () => {
     expect(useNamespaceFilterStore.getState().byTab['tab-2']).toEqual(['platform'])
   })
 
+  it('setScoped changes only the target tab and leaves the remembered filter alone', () => {
+    useNamespaceFilterStore.setState({ last: ['remembered'], byTab: {} })
+    useNamespaceFilterStore.getState().setScoped('pods-tab', ['team-a'])
+    const state = useNamespaceFilterStore.getState()
+    expect(state.byTab['pods-tab']).toEqual(['team-a'])
+    expect(state.last).toEqual(['remembered'])
+    expect(localStorage.getItem('lightship-namespace-filter')).toBeNull()
+  })
+
   it('pruneTo drops entries for tabs that no longer exist', () => {
     const store = useNamespaceFilterStore.getState()
     store.setFor('tab-a', ['a'])

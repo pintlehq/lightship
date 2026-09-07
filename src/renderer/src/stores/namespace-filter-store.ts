@@ -20,6 +20,8 @@ interface NamespaceFilterState {
   byTab: Record<string, string[]>
   /** Apply a selection to a tab and remember it as `last`. */
   setFor: (tabId: string, ns: string[]) => void
+  /** Apply a selection only to one target tab without changing the remembered filter. */
+  setScoped: (tabId: string, ns: string[]) => void
   /** Pin `last` onto a tab on first open (idempotent). */
   seed: (tabId: string) => void
   /** Drop entries for tabs that no longer exist. */
@@ -37,6 +39,7 @@ export const useNamespaceFilterStore = create<NamespaceFilterState>((set) => ({
     }
     set((s) => ({ last: ns, byTab: { ...s.byTab, [tabId]: ns } }))
   },
+  setScoped: (tabId, ns) => set((s) => ({ byTab: { ...s.byTab, [tabId]: ns } })),
   seed: (tabId) => set((s) => (tabId in s.byTab ? s : { byTab: { ...s.byTab, [tabId]: s.last } })),
   pruneTo: (ids) =>
     set((s) => {

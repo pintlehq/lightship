@@ -1,6 +1,7 @@
 import type { ResourceRef } from '../../shared/ipc-types'
 
 export const GVK: Record<string, { apiVersion: string; kind: string; namespaced: boolean }> = {
+  namespaces: { apiVersion: 'v1', kind: 'Namespace', namespaced: false },
   pods: { apiVersion: 'v1', kind: 'Pod', namespaced: true },
   deployments: { apiVersion: 'apps/v1', kind: 'Deployment', namespaced: true },
   statefulsets: { apiVersion: 'apps/v1', kind: 'StatefulSet', namespaced: true },

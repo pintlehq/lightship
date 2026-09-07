@@ -4,6 +4,7 @@ import { toast } from '@renderer/ui/components/toaster'
 
 import type {
   ClusterMeta,
+  NamespaceCreateInput,
   CustomResourceList,
   CustomResourceParams,
   Pod,
@@ -18,6 +19,10 @@ import {
   fetchConfigData,
   fetchEvents,
   fetchNodes,
+  fetchNamespaceDetail,
+  fetchNamespaceSummaries,
+  createNamespaceResource,
+  deleteNamespaceResource,
   fetchNodeDetail,
   fetchOverview,
   fetchOverviewBundle,
@@ -123,6 +128,99 @@ export const useNodeDetail = (clusterId: string | null, name: string) => {
     queryFn: () => fetchNodeDetail(clusterId, name),
     // Slow poll so the point-in-time CPU/memory usage (and the charts) stay fresh.
     refetchInterval: 15000
+  })
+}
+
+export const useNamespaceSummaries = (clusterId: string | null) =>
+  useQuery({
+    queryKey: qk.namespaceSummaries(clusterId),
+    queryFn: () => fetchNamespaceSummaries(clusterId),
+    refetchInterval: 30_000
+  })
+
+export const useNamespaceDetail = (clusterId: string | null, name: string) =>
+  useQuery({
+    queryKey: qk.namespaceDetail(clusterId, name),
+    queryFn: () => fetchNamespaceDetail(clusterId, name),
+    refetchInterval: 30_000
+  })
+
+function invalidateNamespaces(
+  qc: ReturnType<typeof useQueryClient>,
+  clusterId: string | null,
+  name?: string
+): void {
+  void qc.invalidateQueries({ queryKey: qk.namespaceSummaries(clusterId) })
+  void qc.invalidateQueries({ queryKey: qk.resource(clusterId, 'namespaces') })
+  void qc.invalidateQueries({ queryKey: qk.overview(clusterId) })
+  void qc.invalidateQueries({ queryKey: qk.overviewBundle(clusterId) })
+  if (name) void qc.invalidateQueries({ queryKey: qk.namespaceDetail(clusterId, name) })
+}
+
+export const useCreateNamespace = (clusterId: string | null) => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: NamespaceCreateInput) => createNamespaceResource(clusterId, input),
+    onSuccess: (_data, input) => {
+      const name = input.mode === 'form' ? input.name : undefined
+      invalidateNamespaces(qc, clusterId, name)
+      toast.success(`Created namespace${name ? ` ${name}` : ''}`)
+      if (clusterId)
+        recordActivity({
+          clusterId,
+          action: 'create-yaml',
+          kind: 'namespaces',
+          name,
+          count: 1,
+          outcome: 'success'
+        })
+    },
+    onError: (error, input) => {
+      toast.error('Failed to create namespace', errMsg(error))
+      if (clusterId)
+        recordActivity({
+          clusterId,
+          action: 'create-yaml',
+          kind: 'namespaces',
+          name: input.mode === 'form' ? input.name : undefined,
+          count: 1,
+          outcome: 'error',
+          message: errMsg(error)
+        })
+    }
+  })
+}
+
+export const useDeleteNamespace = (clusterId: string | null) => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (name: string) => deleteNamespaceResource(clusterId, name),
+    onSuccess: (_data, name) => {
+      invalidateNamespaces(qc, clusterId, name)
+      toast.success(`Namespace ${name} is being deleted`)
+      if (clusterId)
+        recordActivity({
+          clusterId,
+          action: 'delete',
+          kind: 'namespaces',
+          name,
+          count: 1,
+          outcome: 'success'
+        })
+    },
+    onError: (error, name) => {
+      toast.error('Failed to delete namespace', errMsg(error))
+      if (clusterId)
+        recordActivity({
+          clusterId,
+          action: 'delete',
+          kind: 'namespaces',
+          name,
+          count: 1,
+          outcome: 'error',
+          message: errMsg(error)
+        })
+    }
   })
 }
 

@@ -38,6 +38,7 @@ function App() {
   } = useTabsStore()
   const ui = useUiStore()
   const seedNs = useNamespaceFilterStore((s) => s.seed)
+  const setScopedNs = useNamespaceFilterStore((s) => s.setScoped)
   const pruneNs = useNamespaceFilterStore((s) => s.pruneTo)
   const toggleTheme = useThemeStore((s) => s.toggle)
 
@@ -108,6 +109,25 @@ function App() {
       icon: 'server',
       view: { kind: 'node-detail', clusterId, node }
     })
+
+  const onOpenNamespace = (clusterId: string, name: string) =>
+    openTab({
+      id: `namespace:${clusterId}:${name}`,
+      label: `${name}·namespace`,
+      icon: 'folder',
+      view: { kind: 'namespace-detail', clusterId, name }
+    })
+
+  const onOpenNamespacedResource = (
+    clusterId: string,
+    resourceId: string,
+    label: string,
+    namespace: string
+  ) => {
+    const { seedNamespaceFilter: _seed, ...tab } = lightshipNavTab(resourceId, label, clusterId)
+    setScopedNs(tab.id, [namespace])
+    openTab(tab)
+  }
 
   // Open one CRD's live-instances browser. Shared by the CRD list row and the
   // sidebar's grouped Custom Resources tree so both open the identical tab.
@@ -255,6 +275,13 @@ function App() {
           label: 'Nodes',
           hint: '12 nodes',
           onSelect: () => fallbackCluster && selectNav('nodes', 'Nodes', fallbackCluster.id)
+        },
+        {
+          icon: 'folder',
+          label: 'Namespaces',
+          hint: 'namespace management',
+          onSelect: () =>
+            fallbackCluster && selectNav('namespaces', 'Namespaces', fallbackCluster.id)
         },
         {
           icon: 'zap',
@@ -408,6 +435,8 @@ function App() {
         onOpenLogs,
         onExec,
         onOpenNode,
+        onOpenNamespace,
+        onOpenNamespacedResource,
         onOpenResource,
         onOpenWorkloadLogs,
         onOpenCrdInstance,

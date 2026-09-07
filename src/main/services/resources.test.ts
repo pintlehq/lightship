@@ -255,6 +255,16 @@ describe('mutation GVK contract (no cluster I/O)', () => {
     expect((rec.del[0].metadata as Record<string, unknown>).namespace).toBeUndefined()
   })
 
+  it('deleteResource also protects default and kube-* namespaces from generic deletion', async () => {
+    await expect(deleteResource('c1', { kind: 'namespaces', name: 'default' })).rejects.toThrow(
+      /protected/
+    )
+    await expect(deleteResource('c1', { kind: 'namespaces', name: 'kube-system' })).rejects.toThrow(
+      /protected/
+    )
+    expect(rec.del).toHaveLength(0)
+  })
+
   it('deleteResource rejects unknown kinds', async () => {
     await expect(deleteResource('c1', { kind: 'frobs', name: 'x' })).rejects.toThrow(
       /Unknown resource kind/
