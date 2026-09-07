@@ -1,4 +1,4 @@
-import { PassThrough } from 'node:stream'
+import { PassThrough, type Readable } from 'node:stream'
 import type { WebContents } from 'electron'
 import type { KubeConfig, V1Pod } from '@kubernetes/client-node'
 
@@ -117,9 +117,10 @@ export async function startLogStream(
   const controllers: AbortController[] = []
   let buf: LogLine[] = []
   let timer: ReturnType<typeof setTimeout> | null = null
+  let active = true
 
   const send = (ev: LogEvent): void => {
-    if (!sender.isDestroyed()) sender.send(`cluster:logs:${subId}`, ev)
+    if (active && !sender.isDestroyed()) sender.send(`cluster:logs:${subId}`, ev)
   }
   const flush = (): void => {
     timer = null
@@ -129,18 +130,23 @@ export async function startLogStream(
     }
   }
   const push = (line: LogLine): void => {
+    if (!active) return
     buf.push(line)
     if (buf.length >= FLUSH_LINES) flush()
     else if (!timer) timer = setTimeout(flush, FLUSH_MS)
   }
+  const onDestroyed = (): void => stopLogStream(subId)
   const cleanup = (): void => {
+    if (!active) return
+    active = false
     if (timer) clearTimeout(timer)
     timer = null
+    buf = []
+    sender.removeListener('destroyed', onDestroyed)
   }
 
   const sub: Sub = { controllers, cleanup }
   subs.set(subId, sub)
-  const onDestroyed = (): void => stopLogStream(subId)
   sender.once('destroyed', onDestroyed)
 
   try {
@@ -165,6 +171,7 @@ export async function startLogStream(
 
     const log = new Log(kc)
     for (const t of targets) {
+      if (!active) return
       const pt = new PassThrough()
       let carry = ''
       pt.on('data', (chunk: Buffer) => {
@@ -180,6 +187,22 @@ export async function startLogStream(
         }
       })
       pt.on('error', () => {})
+      // @kubernetes/client-node pipes a hidden Readable.fromWeb(response.body)
+      // into the supplied writable. Aborting its controller errors that readable,
+      // not this PassThrough, so observe the source via the standard `pipe` event.
+      // Expected teardown errors are ignored; live transport failures stay scoped
+      // to the affected pod/container instead of becoming process-level errors.
+      pt.once('pipe', (source: Readable) => {
+        source.on('error', (e: unknown) => {
+          if (!active) return
+          push({
+            pod: t.pod,
+            container: t.container,
+            ts: '',
+            msg: `failed to stream: ${e instanceof Error ? e.message : String(e)}`
+          })
+        })
+      })
 
       try {
         const ctrl = await log.log(t.ns, t.pod, t.container, pt, {
@@ -194,6 +217,7 @@ export async function startLogStream(
         }
         controllers.push(ctrl)
       } catch (e) {
+        if (!active) return
         push({
           pod: t.pod,
           container: t.container,
