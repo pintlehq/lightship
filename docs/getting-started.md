@@ -36,9 +36,9 @@ electron-vite. Closing the development window stops the app; restart `pnpm dev` 
 3. Select one or more contexts and add them.
 4. Open **Manage clusters** and use the connection test to confirm access.
 
-Lightship exports a minimal kubeconfig for each selected context and saves it as a separate
-encrypted credential. Removing a cluster removes Lightship's saved copy; it does not change the
-original kubeconfig or delete anything from the cluster.
+Lightship exports a minimal kubeconfig for each selected context and encrypts it inside its
+main-process-owned cluster store. Removing a cluster removes Lightship's encrypted copy; it does not
+change the original kubeconfig or delete anything from the cluster.
 
 The selected Kubernetes identity controls what Lightship can read or change. If a view is empty or
 an operation is rejected, check that identity's RBAC permissions and cluster connectivity.

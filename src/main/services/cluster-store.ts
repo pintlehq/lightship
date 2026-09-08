@@ -1,34 +1,57 @@
-import { app, safeStorage } from 'electron'
-import { promises as fs } from 'node:fs'
-import { join } from 'node:path'
+import { safeStorage } from 'electron'
 import { randomUUID } from 'node:crypto'
+import { z } from 'zod'
 
 import type { ClusterMeta } from '../../shared/ipc-types'
-import { ClusterMetaArraySchema } from '../../shared/ipc-types'
-import { parseOrFallback } from '../../shared/validate'
+import { ClusterMetaSchema } from '../../shared/ipc-types'
+import { parseOrThrow } from '../../shared/validate'
+import { readFileIfPresent, SerialQueue, storagePaths, writeJsonAtomically } from './storage'
 
-// Persisted under userData/Clusters:
-//   clusters.json                  — plaintext metadata (no secrets)
-//   clusters/<id>.kubeconfig.enc   — safeStorage-encrypted per-cluster kubeconfig
-const baseDir = () => join(app.getPath('userData'), 'Clusters')
-const clustersFile = () => join(baseDir(), 'clusters.json')
-const secretsDir = () => join(baseDir(), 'clusters')
-const secretFile = (id: string) => join(secretsDir(), `${id}.kubeconfig.enc`)
+const PersistedClusterSchema = ClusterMetaSchema.extend({
+  encryptedKubeconfig: z.base64().min(1)
+})
+const ClusterStoreSchema = z.object({
+  schemaVersion: z.literal(1),
+  clusters: z.array(PersistedClusterSchema)
+})
 
-export async function listClusters(): Promise<ClusterMeta[]> {
-  let raw: unknown
-  try {
-    raw = JSON.parse(await fs.readFile(clustersFile(), 'utf8'))
-  } catch {
-    return [] // missing / unreadable file
+type PersistedCluster = z.infer<typeof PersistedClusterSchema>
+type ClusterStore = z.infer<typeof ClusterStoreSchema>
+
+const EMPTY_STORE: ClusterStore = { schemaVersion: 1, clusters: [] }
+const writes = new SerialQueue()
+
+function publicMeta(cluster: PersistedCluster): ClusterMeta {
+  return {
+    id: cluster.id,
+    name: cluster.name,
+    context: cluster.context,
+    server: cluster.server,
+    env: cluster.env
   }
-  // A corrupt clusters.json must not crash the app — fall back to empty.
-  return parseOrFallback(ClusterMetaArraySchema, raw, [], 'clusters.json')
 }
 
-async function writeClusters(list: ClusterMeta[]): Promise<void> {
-  await fs.mkdir(baseDir(), { recursive: true })
-  await fs.writeFile(clustersFile(), JSON.stringify(list, null, 2), 'utf8')
+async function readStore(): Promise<ClusterStore> {
+  const raw = await readFileIfPresent(storagePaths().clusters)
+  if (raw === undefined) return EMPTY_STORE
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch (error) {
+    throw new Error('clusters.json contains invalid JSON.', { cause: error })
+  }
+  return parseOrThrow(ClusterStoreSchema, parsed, 'clusters.json')
+}
+
+async function writeStore(store: ClusterStore): Promise<void> {
+  const validated = parseOrThrow(ClusterStoreSchema, store, 'clusters.json')
+  await writeJsonAtomically(storagePaths().clusters, validated)
+}
+
+export async function listClusters(): Promise<ClusterMeta[]> {
+  await writes.wait()
+  return (await readStore()).clusters.map(publicMeta)
 }
 
 export async function saveCluster(
@@ -41,55 +64,70 @@ export async function saveCluster(
     )
   }
   const id = meta.id ?? randomUUID()
-  const full: ClusterMeta = {
+  const full: PersistedCluster = {
     id,
     name: meta.name,
     context: meta.context,
     server: meta.server,
-    env: meta.env
+    env: meta.env,
+    encryptedKubeconfig: safeStorage.encryptString(kubeconfigYaml).toString('base64')
   }
-  await fs.mkdir(secretsDir(), { recursive: true })
-  await fs.writeFile(secretFile(id), safeStorage.encryptString(kubeconfigYaml))
-  const list = await listClusters()
-  await writeClusters([...list.filter((c) => c.id !== id), full])
-  return full
+  await writes.run(async () => {
+    const store = await readStore()
+    await writeStore({
+      schemaVersion: 1,
+      clusters: [...store.clusters.filter((cluster) => cluster.id !== id), full]
+    })
+  })
+  return publicMeta(full)
 }
 
 /** Rename a cluster's display name only (kubeconfig/context untouched). */
 export async function renameCluster(id: string, name: string): Promise<void> {
-  const list = await listClusters()
-  await writeClusters(list.map((c) => (c.id === id ? { ...c, name } : c)))
+  await writes.run(async () => {
+    const store = await readStore()
+    await writeStore({
+      schemaVersion: 1,
+      clusters: store.clusters.map((cluster) =>
+        cluster.id === id ? { ...cluster, name } : cluster
+      )
+    })
+  })
 }
 
 export async function reorderClusters(ids: string[]): Promise<ClusterMeta[]> {
-  const list = await listClusters()
-  const byId = new Map(list.map((c) => [c.id, c]))
-  const uniqueIds = new Set(ids)
+  return writes.run(async () => {
+    const store = await readStore()
+    const byId = new Map(store.clusters.map((cluster) => [cluster.id, cluster]))
+    const uniqueIds = new Set(ids)
 
-  if (
-    ids.length !== list.length ||
-    uniqueIds.size !== ids.length ||
-    ids.some((id) => !byId.has(id))
-  ) {
-    throw new Error('Cluster order must include each saved cluster exactly once.')
-  }
+    if (
+      ids.length !== store.clusters.length ||
+      uniqueIds.size !== ids.length ||
+      ids.some((id) => !byId.has(id))
+    ) {
+      throw new Error('Cluster order must include each saved cluster exactly once.')
+    }
 
-  const ordered = ids.map((id) => byId.get(id)!)
-  await writeClusters(ordered)
-  return ordered
+    const ordered = ids.map((id) => byId.get(id)!)
+    await writeStore({ schemaVersion: 1, clusters: ordered })
+    return ordered.map(publicMeta)
+  })
 }
 
 export async function readKubeconfig(id: string): Promise<string> {
-  const buf = await fs.readFile(secretFile(id))
-  return safeStorage.decryptString(buf)
+  await writes.wait()
+  const cluster = (await readStore()).clusters.find((candidate) => candidate.id === id)
+  if (!cluster) throw new Error(`Unknown cluster: ${id}`)
+  return safeStorage.decryptString(Buffer.from(cluster.encryptedKubeconfig, 'base64'))
 }
 
 export async function removeCluster(id: string): Promise<void> {
-  const list = await listClusters()
-  await writeClusters(list.filter((c) => c.id !== id))
-  try {
-    await fs.unlink(secretFile(id))
-  } catch {
-    /* already gone */
-  }
+  await writes.run(async () => {
+    const store = await readStore()
+    await writeStore({
+      schemaVersion: 1,
+      clusters: store.clusters.filter((cluster) => cluster.id !== id)
+    })
+  })
 }

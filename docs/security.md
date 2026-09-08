@@ -7,14 +7,16 @@ Kubernetes API.
 ## Credential storage
 
 When a context is imported, Lightship exports a minimal kubeconfig containing that context and its
-referenced cluster and user. It stores each imported kubeconfig separately under Electron's
-platform-specific `userData/Clusters` directory.
+referenced cluster and user. It stores the imported clusters in Electron's platform-specific
+`userData/lightship-data/configs/clusters.json` file.
 
-- `clusters.json` contains display metadata such as name, context, and server, but no kubeconfig.
-- `clusters/<id>.kubeconfig.enc` contains the kubeconfig encrypted with Electron `safeStorage`.
+- Each record contains display metadata plus a Base64-encoded `safeStorage` ciphertext. Base64 is
+  only the JSON encoding; the kubeconfig itself is encrypted before persistence.
+- Renderer and IPC cluster records contain display metadata only and never include ciphertext or
+  plaintext kubeconfig data.
 - Lightship refuses to persist a cluster if the operating system's secure storage is unavailable.
-- Removing a saved cluster deletes its encrypted kubeconfig from Lightship and leaves the original
-  kubeconfig unchanged.
+- Removing a saved cluster removes the complete persisted record and leaves the original kubeconfig
+  unchanged.
 
 The security of `safeStorage` depends on the platform credential service and the user's operating
 system account. Protect and lock that account as you would for any application holding cluster
@@ -66,10 +68,12 @@ new Electron windows.
 
 The following data is stored without `safeStorage`:
 
-- Cluster display metadata in `clusters.json`
-- Up to 500 remembered resource-detail tab selections in `ui-state.json`
-- Up to 500 mutation records in `activity.json`, including cluster, resource, action, outcome, and
-  timestamp
+- Cluster display metadata in `lightship-data/configs/clusters.json` (the credential field is
+  encrypted)
+- Up to 500 remembered resource-detail tab selections in
+  `lightship-data/configs/preferences.json`
+- Up to 500 mutation records in `lightship-data/history/activity.json`, including cluster,
+  resource, action, outcome, and timestamp
 - Theme and namespace-filter preferences in renderer `localStorage`
 
 Activity history can expose operational names and failure messages. Exported activity JSON is also

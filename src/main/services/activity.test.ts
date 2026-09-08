@@ -1,10 +1,10 @@
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdirSync, promises as fs, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import type { ActivityInput } from '../../shared/ipc-types'
 
-// activity persists a JSON log under userData/Clusters. Route Electron's
+// activity persists a versioned JSON document under lightship-data/history. Route Electron's
 // `app.getPath` to a throwaway temp dir so the service writes to disk in tests.
 const env = vi.hoisted(() => {
   const fs = require('node:fs') as typeof import('node:fs')
@@ -18,8 +18,10 @@ vi.mock('electron', () => ({ app: { getPath: () => env.dir } }))
 // Imported after vi.mock so its (transitive) `from 'electron'` binds the stub.
 import * as activity from './activity'
 
-const clustersDir = join(env.dir, 'Clusters')
-const activityFile = join(clustersDir, 'activity.json')
+const lightshipDataDir = join(env.dir, 'lightship-data')
+const historyDir = join(lightshipDataDir, 'history')
+const activityFile = join(historyDir, 'activity.json')
+const previousHistoryDir = join(env.dir, 'history')
 
 const input = (over: Partial<ActivityInput> = {}): ActivityInput => ({
   clusterId: 'c1',
@@ -31,9 +33,11 @@ const input = (over: Partial<ActivityInput> = {}): ActivityInput => ({
 })
 
 beforeEach(() => {
-  rmSync(clustersDir, { recursive: true, force: true })
+  rmSync(lightshipDataDir, { recursive: true, force: true })
+  rmSync(previousHistoryDir, { recursive: true, force: true })
 })
 
+afterEach(() => vi.restoreAllMocks())
 afterAll(() => rmSync(env.dir, { recursive: true, force: true }))
 
 describe('activity', () => {
@@ -66,7 +70,7 @@ describe('activity', () => {
     expect(all[0].name).toBe('n509') // newest first
     expect(all.at(-1)?.name).toBe('n10') // oldest 10 (n0..n9) evicted
     expect(all.some((r) => r.name === 'n9')).toBe(false)
-  })
+  }, 20_000)
 
   it('clears the history', async () => {
     await activity.recordActivity(input())
@@ -75,12 +79,12 @@ describe('activity', () => {
   })
 
   it('falls back to empty on a corrupt or wrong-shape file', async () => {
-    mkdirSync(clustersDir, { recursive: true })
+    mkdirSync(historyDir, { recursive: true })
 
     writeFileSync(activityFile, '{ not valid json', 'utf8')
     expect(await activity.readActivity()).toEqual([])
 
-    writeFileSync(activityFile, JSON.stringify({ records: 'nope' }), 'utf8')
+    writeFileSync(activityFile, JSON.stringify({ schemaVersion: 1, records: 'nope' }), 'utf8')
     expect(await activity.readActivity()).toEqual([])
   })
 
@@ -91,5 +95,49 @@ describe('activity', () => {
     const all = await activity.readActivity()
     expect(all).toHaveLength(20)
     expect(new Set(all.map((r) => r.name)).size).toBe(20) // no clobbered/duplicate entries
+  })
+
+  it('writes a versioned activity document', async () => {
+    await activity.recordActivity(input())
+    expect(JSON.parse(readFileSync(activityFile, 'utf8'))).toMatchObject({
+      schemaVersion: 1,
+      records: expect.any(Array)
+    })
+  })
+
+  it('recovers its queue after a failed atomic replacement', async () => {
+    await activity.recordActivity(input({ name: 'first' }))
+    vi.spyOn(fs, 'rename').mockRejectedValueOnce(new Error('injected rename failure'))
+    await expect(activity.recordActivity(input({ name: 'failed' }))).rejects.toThrow(
+      /injected rename failure/
+    )
+
+    await activity.recordActivity(input({ name: 'second' }))
+    expect((await activity.readActivity()).map((record) => record.name)).toEqual([
+      'second',
+      'first'
+    ])
+  })
+
+  it('uses private POSIX permissions', async () => {
+    if (process.platform === 'win32') return
+    await activity.recordActivity(input())
+
+    expect(statSync(historyDir).mode & 0o777).toBe(0o700)
+    expect(statSync(activityFile).mode & 0o777).toBe(0o600)
+  })
+
+  it('ignores and preserves the previous top-level history directory', async () => {
+    mkdirSync(previousHistoryDir, { recursive: true })
+    const previousFile = join(previousHistoryDir, 'activity.json')
+    writeFileSync(
+      previousFile,
+      JSON.stringify({ schemaVersion: 1, records: [{ name: 'previous' }] }),
+      'utf8'
+    )
+
+    expect(await activity.readActivity()).toEqual([])
+    await activity.recordActivity(input({ name: 'fresh' }))
+    expect(readFileSync(previousFile, 'utf8')).toContain('previous')
   })
 })

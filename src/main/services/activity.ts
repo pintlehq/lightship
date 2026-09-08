@@ -1,46 +1,44 @@
-import { app } from 'electron'
 import { randomUUID } from 'node:crypto'
-import { promises as fs } from 'node:fs'
-import { join } from 'node:path'
+import { z } from 'zod'
 
-import type { ActivityHistory, ActivityInput, ActivityRecord } from '../../shared/ipc-types'
-import { ActivityHistorySchema } from '../../shared/ipc-types'
+import type { ActivityInput, ActivityRecord } from '../../shared/ipc-types'
+import { ActivityRecordArraySchema } from '../../shared/ipc-types'
 import { parseOrFallback } from '../../shared/validate'
 import { listClusters } from './cluster-store'
+import { readFileIfPresent, SerialQueue, storagePaths, writeJsonAtomically } from './storage'
 
-// Global Activity history of mutating actions, persisted alongside clusters.json /
-// ui-state.json under userData/Clusters. Non-sensitive — plain JSON, no safeStorage.
-const baseDir = (): string => join(app.getPath('userData'), 'Clusters')
-const file = (): string => join(baseDir(), 'activity.json')
-
-const EMPTY: ActivityHistory = { records: [] }
+const PersistedActivitySchema = z.object({
+  schemaVersion: z.literal(1),
+  records: ActivityRecordArraySchema
+})
+const EMPTY = { schemaVersion: 1 as const, records: [] as ActivityRecord[] }
 
 // Records accumulate forever; keep only the most recent N (FIFO, drop oldest).
 const MAX_ACTIVITY = 500
 
-// Reads-modify-writes are serialized through this promise chain so overlapping
-// appends (parallel tabs, quick succession) can't clobber each other's writes.
-let writeChain: Promise<void> = Promise.resolve()
+const writes = new SerialQueue()
 
 /** Records as stored on disk: oldest-first (append order). */
 async function readRaw(): Promise<ActivityRecord[]> {
+  const text = await readFileIfPresent(storagePaths().activity)
+  if (text === undefined) return []
+
   let raw: unknown
   try {
-    raw = JSON.parse(await fs.readFile(file(), 'utf8'))
+    raw = JSON.parse(text)
   } catch {
-    return [] // missing / unreadable file
+    return []
   }
-  // A corrupt activity.json must never crash startup — fall back to empty.
-  return parseOrFallback(ActivityHistorySchema, raw, EMPTY, 'activity.json').records
+  return parseOrFallback(PersistedActivitySchema, raw, EMPTY, 'activity.json').records
 }
 
 async function writeRaw(records: ActivityRecord[]): Promise<void> {
-  await fs.mkdir(baseDir(), { recursive: true })
-  await fs.writeFile(file(), JSON.stringify({ records }, null, 2), 'utf8')
+  await writeJsonAtomically(storagePaths().activity, { schemaVersion: 1, records })
 }
 
 /** The Activity history, newest first (the order the view renders). */
 export async function readActivity(): Promise<ActivityRecord[]> {
+  await writes.wait()
   return (await readRaw()).reverse()
 }
 
@@ -54,15 +52,15 @@ export async function recordActivity(input: ActivityInput): Promise<ActivityReco
     ts: Date.now(),
     clusterName
   }
-  await (writeChain = writeChain.then(async () => {
+  await writes.run(async () => {
     const records = (await readRaw()).concat(rec)
     if (records.length > MAX_ACTIVITY) records.splice(0, records.length - MAX_ACTIVITY)
     await writeRaw(records)
-  }))
+  })
   return rec
 }
 
 /** Erase the whole history. */
 export async function clearActivity(): Promise<void> {
-  await (writeChain = writeChain.then(() => writeRaw([])))
+  await writes.run(() => writeRaw([]))
 }

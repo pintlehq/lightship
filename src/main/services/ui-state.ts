@@ -1,47 +1,56 @@
-import { app } from 'electron'
-import { promises as fs } from 'node:fs'
-import { join } from 'node:path'
+import { z } from 'zod'
 
 import type { UiState } from '../../shared/ipc-types'
-import { UiStateSchema } from '../../shared/ipc-types'
 import { parseOrFallback } from '../../shared/validate'
+import { readFileIfPresent, SerialQueue, storagePaths, writeJsonAtomically } from './storage'
 
-// Non-sensitive renderer UI state, persisted alongside clusters.json under
-// userData/Clusters. No safeStorage — there are no credentials here.
-const baseDir = () => join(app.getPath('userData'), 'Clusters')
-const stateFile = () => join(baseDir(), 'ui-state.json')
-
-const EMPTY: UiState = { detailTabs: {} }
+const PersistedPreferencesSchema = z.object({
+  schemaVersion: z.literal(1),
+  detailTabs: z.record(z.string(), z.string())
+})
+const EMPTY = { schemaVersion: 1 as const, detailTabs: {} }
+const writes = new SerialQueue()
 
 // Per-resource keys accumulate forever; cap the map (rough LRU — a touched key
 // is moved to the tail on write) so the file can't grow without bound.
 const MAX_DETAIL_TABS = 500
 
-export async function readUiState(): Promise<UiState> {
+async function readPreferences(): Promise<UiState> {
+  const text = await readFileIfPresent(storagePaths().preferences)
+  if (text === undefined) return { detailTabs: {} }
+
   let raw: unknown
   try {
-    raw = JSON.parse(await fs.readFile(stateFile(), 'utf8'))
+    raw = JSON.parse(text)
   } catch {
-    return { detailTabs: {} } // missing / unreadable file
+    return { detailTabs: {} }
   }
-  // A corrupt ui-state.json must never crash startup — fall back to empty.
-  return parseOrFallback(UiStateSchema, raw, EMPTY, 'ui-state.json')
+  const preferences = parseOrFallback(PersistedPreferencesSchema, raw, EMPTY, 'preferences.json')
+  return { detailTabs: preferences.detailTabs }
 }
 
 async function writeUiState(state: UiState): Promise<void> {
-  await fs.mkdir(baseDir(), { recursive: true })
-  await fs.writeFile(stateFile(), JSON.stringify(state, null, 2), 'utf8')
+  await writeJsonAtomically(storagePaths().preferences, { schemaVersion: 1, ...state })
+}
+
+export async function readUiState(): Promise<UiState> {
+  await writes.wait()
+  return readPreferences()
 }
 
 /** Remember the active sub-tab for one resource. */
 export async function setDetailTab(key: string, tab: string): Promise<void> {
-  const state = await readUiState()
-  // Delete-then-reassign so the touched key moves to the tail (recency order).
-  delete state.detailTabs[key]
-  let detailTabs = { ...state.detailTabs, [key]: tab }
-  const keys = Object.keys(detailTabs)
-  if (keys.length > MAX_DETAIL_TABS) {
-    detailTabs = Object.fromEntries(Object.entries(detailTabs).slice(keys.length - MAX_DETAIL_TABS))
-  }
-  await writeUiState({ ...state, detailTabs })
+  await writes.run(async () => {
+    const state = await readPreferences()
+    // Delete-then-reassign so the touched key moves to the tail (recency order).
+    delete state.detailTabs[key]
+    let detailTabs = { ...state.detailTabs, [key]: tab }
+    const keys = Object.keys(detailTabs)
+    if (keys.length > MAX_DETAIL_TABS) {
+      detailTabs = Object.fromEntries(
+        Object.entries(detailTabs).slice(keys.length - MAX_DETAIL_TABS)
+      )
+    }
+    await writeUiState({ ...state, detailTabs })
+  })
 }

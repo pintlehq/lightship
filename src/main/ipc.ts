@@ -275,7 +275,7 @@ export function registerLightshipIpc(): void {
     watch.stopWatch(subId)
   )
 
-  // Persisted renderer UI state (non-sensitive; userData/Clusters/ui-state.json).
+  // Persisted renderer UI state (non-sensitive; lightship-data/configs/preferences.json).
   registerInvokeHandler(
     'uiState:getDetailTabs',
     parseArgs(),
@@ -286,7 +286,7 @@ export function registerLightshipIpc(): void {
     uiState.setDetailTab(key, tab)
   )
 
-  // Global Activity history (non-sensitive; userData/Clusters/activity.json).
+  // Global Activity history (non-sensitive; lightship-data/history/activity.json).
   registerInvokeHandler(
     'activity:record',
     parseArgs(ActivityInputSchema),

@@ -53,19 +53,22 @@ forwards, and theme preference. Backend-owned Kubernetes objects are not copied 
 Some UI preferences cross these categories deliberately:
 
 - Theme and the last namespace filter are stored in renderer `localStorage`.
-- The last selected detail sub-tab is written through the main process to `ui-state.json`.
+- The last selected detail sub-tab is written through the main process to
+  `lightship-data/configs/preferences.json`.
 - Tabs, terminal sessions, and port-forward sessions are not restored after an application restart.
 
 ## Persistence
 
-Electron's platform-specific `userData` directory contains a `Clusters` directory:
+Electron's platform-specific `userData` directory contains the following application-owned files:
 
-| Data                     | Storage                                                      |
-| ------------------------ | ------------------------------------------------------------ |
-| Cluster display metadata | `clusters.json` in plaintext                                 |
-| Per-cluster kubeconfig   | `clusters/<id>.kubeconfig.enc`, encrypted with `safeStorage` |
-| Remembered detail tabs   | `ui-state.json` in plaintext, capped at 500 entries          |
-| Activity history         | `activity.json` in plaintext, capped at 500 records          |
+| Data                     | Storage                                                                               |
+| ------------------------ | ------------------------------------------------------------------------------------- |
+| Clusters and credentials | `lightship-data/configs/clusters.json`; metadata plus Base64 `safeStorage` ciphertext |
+| Remembered detail tabs   | `lightship-data/configs/preferences.json` in plaintext, capped at 500 entries         |
+| Activity history         | `lightship-data/history/activity.json` in plaintext, capped at 500 records            |
+
+Each document has a versioned JSON envelope and is replaced atomically after serialized updates.
+The main process strips encrypted credentials before returning cluster metadata over IPC.
 
 Terminal sessions temporarily decrypt the selected kubeconfig into Electron's temporary directory
 with owner-only file permissions. Cleanup runs when the terminal exits or is stopped.
