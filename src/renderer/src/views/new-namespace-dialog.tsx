@@ -9,6 +9,7 @@ import { Tabs } from '@renderer/ui/components/tabs'
 import { useThemeStore } from '@renderer/ui/stores/theme-store'
 
 import { isValidLabelKey, isValidLabelValue, isValidNamespaceName } from '../../../shared/ipc-types'
+import { lightshipSearch } from '../lib/cm-search'
 import { lightshipCmTheme } from '../lib/cm-theme'
 import { useCreateNamespace } from '../queries/use-lightship-data'
 import { useUiStore } from '../stores/ui-store'
@@ -175,7 +176,7 @@ export function NewNamespaceDialog({
               value={yamlDraft}
               onChange={setYamlDraft}
               theme={theme}
-              extensions={[yaml()]}
+              extensions={[yaml(), lightshipSearch]}
               height="100%"
               className="h-full text-[12.5px]"
             />

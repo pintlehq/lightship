@@ -7,6 +7,7 @@ import { Icon } from '@renderer/ui/components/icon'
 import { useThemeStore } from '@renderer/ui/stores/theme-store'
 
 import type { ResourceRef } from '../../../shared/ipc-types'
+import { lightshipSearch } from '../lib/cm-search'
 import { lightshipCmTheme } from '../lib/cm-theme'
 import { useApplyYaml, useResourceYaml } from '../queries/use-lightship-data'
 import { useUiStore } from '../stores/ui-store'
@@ -76,6 +77,7 @@ export function YamlEditor({
           </span>
         )}
         <div className="ml-auto flex gap-2">
+          <WrapToggle wrap={wrap} onToggle={() => setWrap((w) => !w)} />
           <Button
             variant="outline"
             size="default"
@@ -107,13 +109,16 @@ export function YamlEditor({
               value={draft}
               onChange={setDraft}
               theme={cmTheme}
-              extensions={wrap ? [yaml(), EditorView.lineWrapping] : [yaml()]}
+              extensions={
+                wrap
+                  ? [yaml(), EditorView.lineWrapping, lightshipSearch]
+                  : [yaml(), lightshipSearch]
+              }
               editable={!apply.isPending}
               height="100%"
               className="h-full text-[12.5px]"
               basicSetup={{ foldGutter: true, highlightActiveLine: !readOnly }}
             />
-            <WrapToggle wrap={wrap} onToggle={() => setWrap((w) => !w)} />
           </>
         )}
       </div>

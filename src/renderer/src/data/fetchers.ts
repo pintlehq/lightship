@@ -294,6 +294,18 @@ export async function fetchResource(
 ): Promise<ResourceRow[]> {
   if (hasBackend()) return clusterId ? clusterApi.listResource(clusterId, kind) : []
   await delay(80)
+  // The browser-only Secret fixture exercises reveal and search without a cluster.
+  if (import.meta.env.MODE === 'e2e' && kind === 'secrets') {
+    return [
+      {
+        uid: 'default/example-secret',
+        namespace: 'default',
+        name: 'example-secret',
+        age: '1d',
+        columns: { type: 'Opaque', keys: '2' }
+      }
+    ]
+  }
   return [] // no mock for generic resources in a plain browser
 }
 

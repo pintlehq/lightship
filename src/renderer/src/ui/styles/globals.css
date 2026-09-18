@@ -244,6 +244,129 @@
   --animate-overlay-in: overlay-in 0.14s ease-out;
 }
 
+/* CodeMirror search shares the compact controls and semantic tokens used by Lightship. */
+.cm-editor .cm-panel.cm-lightship-search {
+  padding: 7px 10px;
+  border-bottom: 1px solid rgb(var(--border));
+  background: rgb(var(--chrome));
+  color: rgb(var(--foreground));
+  font-family: 'JetBrains Mono Variable', ui-monospace, monospace;
+  font-size: 11.5px;
+}
+
+.cm-lightship-search-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.cm-lightship-search-row[hidden] {
+  display: none;
+}
+
+.cm-lightship-search-replace-row {
+  margin-top: 6px;
+}
+
+.cm-lightship-search-label {
+  width: 48px;
+  flex: none;
+  color: rgb(var(--dim));
+}
+
+.cm-lightship-search-input {
+  min-width: 125px;
+  max-width: 320px;
+  height: 26px;
+  flex: 1 1 160px;
+  border: 1px solid rgb(var(--input));
+  border-radius: 5px;
+  background: rgb(var(--background));
+  padding: 0 8px;
+  color: rgb(var(--foreground));
+  outline: none;
+}
+
+.cm-lightship-search-input::placeholder {
+  color: rgb(var(--faint));
+}
+
+.cm-lightship-search-input:focus-visible {
+  border-color: rgb(var(--primary));
+  box-shadow: 0 0 0 2px color-mix(in srgb, rgb(var(--ring)) 25%, transparent);
+}
+
+.cm-lightship-search-input[aria-invalid='true'] {
+  border-color: rgb(var(--destructive));
+}
+
+.cm-lightship-search-count {
+  min-width: 47px;
+  color: rgb(var(--dim));
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.cm-lightship-search-button {
+  display: inline-flex;
+  min-width: 26px;
+  height: 26px;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  padding: 0 6px;
+  color: rgb(var(--dim));
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cm-lightship-search-button:hover:not(:disabled) {
+  background: rgb(var(--hover));
+  color: rgb(var(--foreground));
+}
+
+.cm-lightship-search-button:focus-visible {
+  outline: 2px solid rgb(var(--ring));
+  outline-offset: 1px;
+}
+
+.cm-lightship-search-button[aria-pressed='true'] {
+  border-color: color-mix(in srgb, rgb(var(--primary)) 30%, transparent);
+  background: color-mix(in srgb, rgb(var(--primary)) 10%, transparent);
+  color: rgb(var(--primary));
+}
+
+.cm-lightship-search-button:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.cm-lightship-search-replace-toggle {
+  border-color: rgb(var(--border));
+  font-weight: 500;
+}
+
+.cm-lightship-search-close {
+  margin-left: auto;
+  font-size: 17px;
+  font-weight: 400;
+}
+
+.cm-editor .cm-searchMatch {
+  background: color-mix(in srgb, rgb(var(--warning)) 28%, transparent) !important;
+}
+
+.cm-editor .cm-searchMatch-selected {
+  background: color-mix(in srgb, rgb(var(--warning)) 50%, transparent) !important;
+  outline: 1px solid rgb(var(--warning));
+}
+
 /* ---------------------------------------------------------------------------
  * Raw globals ported from the prototype tokens.css
  * ------------------------------------------------------------------------- */

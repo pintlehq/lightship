@@ -8,6 +8,7 @@ import { cn } from '@renderer/ui/lib/utils'
 import { useThemeStore } from '@renderer/ui/stores/theme-store'
 
 import type { ResourceRef } from '../../../shared/ipc-types'
+import { lightshipSearch } from '../lib/cm-search'
 import { lightshipCmTheme } from '../lib/cm-theme'
 import { useCreateFromYaml } from '../queries/use-lightship-data'
 import { useUiStore } from '../stores/ui-store'
@@ -103,10 +104,13 @@ export function NewResourceDialog({
             New {SEEDS[kind]?.kind ?? kind} from YAML
           </h2>
           {create.isError && (
-            <span className="ml-auto truncate font-mono text-[11px] text-destructive">
+            <span className="min-w-0 truncate font-mono text-[11px] text-destructive">
               {create.error instanceof Error ? create.error.message : 'Create failed'}
             </span>
           )}
+          <div className="ml-auto shrink-0">
+            <WrapToggle wrap={wrap} onToggle={() => setWrap((w) => !w)} />
+          </div>
         </div>
 
         <div
@@ -135,13 +139,14 @@ export function NewResourceDialog({
             value={draft}
             onChange={setDraft}
             theme={cmTheme}
-            extensions={wrap ? [yaml(), EditorView.lineWrapping] : [yaml()]}
+            extensions={
+              wrap ? [yaml(), EditorView.lineWrapping, lightshipSearch] : [yaml(), lightshipSearch]
+            }
             editable={!create.isPending}
             height="100%"
             className="h-full text-[12.5px]"
             basicSetup={{ foldGutter: true }}
           />
-          <WrapToggle wrap={wrap} onToggle={() => setWrap((w) => !w)} />
           {dragging && (
             <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center bg-primary/5 font-mono text-[12px] text-primary">
               Drop file to replace

@@ -9,6 +9,7 @@ import { cn } from '@renderer/ui/lib/utils'
 import { useThemeStore } from '@renderer/ui/stores/theme-store'
 
 import type { ResourceRef } from '../../../shared/ipc-types'
+import { lightshipSearch } from '../lib/cm-search'
 import { lightshipCmTheme } from '../lib/cm-theme'
 import { useApplyConfigData, useConfigData } from '../queries/use-lightship-data'
 import { useUiStore } from '../stores/ui-store'
@@ -295,9 +296,11 @@ export function ConfigDataEditor({
                     </div>
                   ) : (
                     <CodeMirror
+                      key={selected.id}
                       value={selected.value}
                       onChange={(v) => patch(selected.id, 'value', v)}
                       theme={cmTheme}
+                      extensions={[lightshipSearch]}
                       editable={!apply.isPending}
                       height="100%"
                       className="h-full text-[12.5px]"
