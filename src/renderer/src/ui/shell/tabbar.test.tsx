@@ -52,6 +52,17 @@ const drop = (el: HTMLElement, clientX: number, dt: ReturnType<typeof dataTransf
 }
 
 describe('Tabbar', () => {
+  it.each(['tabs', 'panel'] as const)('uses the default cursor for %s tabs', (variant) => {
+    render(
+      <Tabbar tabs={tabs} activeId="a" onSelect={vi.fn()} onReorder={vi.fn()} variant={variant} />
+    )
+
+    for (const tab of tabs) {
+      expect(tabElement(tab.label)).toHaveClass('cursor-default')
+      expect(tabElement(tab.label)).not.toHaveClass('cursor-pointer', 'cursor-grab')
+    }
+  })
+
   it('calls onReorder with a before placement', () => {
     const onReorder = vi.fn()
     render(<Tabbar tabs={tabs} activeId="a" onSelect={vi.fn()} onReorder={onReorder} />)

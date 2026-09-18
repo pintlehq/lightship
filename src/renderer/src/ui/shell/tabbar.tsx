@@ -145,8 +145,8 @@ export function Tabbar({
                 onSelect(t.id)
               }}
               className={cn(
-                'group relative flex cursor-pointer select-none items-center gap-2 whitespace-nowrap px-3 font-mono transition-colors',
-                reorderEnabled && 'cursor-grab active:cursor-grabbing',
+                'group relative flex cursor-default select-none items-center gap-2 whitespace-nowrap px-3 font-mono transition-colors',
+                !active && 'hover:bg-hover',
                 draggingId === t.id && 'opacity-45',
                 panel
                   ? cn(
