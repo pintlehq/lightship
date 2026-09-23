@@ -5,6 +5,7 @@ import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ClusterMeta } from '../../../shared/ipc-types'
+import { qk } from '../queries/keys'
 import { ManageClustersView } from './manage-clusters-view'
 
 const alpha: ClusterMeta = { id: 'alpha', name: 'alpha', context: 'alpha', server: 'https://a' }
@@ -46,6 +47,7 @@ function renderManageClusters() {
     <QueryClientProvider client={qc}>{children}</QueryClientProvider>
   )
   render(<ManageClustersView onAdd={vi.fn()} />, { wrapper: Wrapper })
+  return qc
 }
 
 beforeEach(() => {
@@ -87,6 +89,29 @@ describe('ManageClustersView cluster order controls', () => {
       expect(within(rows[0]!).getByRole('button', { name: 'beta' })).toBeInTheDocument()
       expect(within(rows[1]!).getByRole('button', { name: 'alpha' })).toBeInTheDocument()
       expect(within(rows[2]!).getByRole('button', { name: 'gamma' })).toBeInTheDocument()
+    })
+  })
+})
+
+describe('ManageClustersView connection status', () => {
+  it('shows a sidebar check and replaces it after a manual test', async () => {
+    const user = userEvent.setup()
+    const qc = renderManageClusters()
+    await screen.findByRole('button', { name: 'beta' })
+
+    qc.setQueryData(qk.clusterConnection('beta'), { ok: true, version: 'v1' })
+    const betaRow = screen.getByRole('button', { name: 'beta' }).closest('tr')!
+    await waitFor(() => {
+      expect(within(betaRow).getByText('connected')).toBeInTheDocument()
+      expect(within(betaRow).getByText('v1')).toBeInTheDocument()
+    })
+
+    mocks.test.mockResolvedValue({ ok: false, error: 'AWS token expired' })
+    await user.click(within(betaRow).getByRole('button', { name: 'Test connection' }))
+    await waitFor(() => expect(within(betaRow).getByText('AWS token expired')).toBeInTheDocument())
+    expect(qc.getQueryData(qk.clusterConnection('beta'))).toEqual({
+      ok: false,
+      error: 'AWS token expired'
     })
   })
 })

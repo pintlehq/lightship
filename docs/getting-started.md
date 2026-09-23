@@ -34,7 +34,8 @@ electron-vite. Closing the development window stops the app; restart `pnpm dev` 
 2. Use **kubeconfig** to load contexts from the default kubeconfig resolution, normally
    `~/.kube/config`. Alternatively, use **paste YAML** or **Load from file…**.
 3. Select one or more contexts and add them.
-4. Open **Manage clusters** and use the connection test to confirm access.
+4. Select a cluster in the sidebar. Lightship checks the connection before opening its Overview.
+   **Manage clusters** still offers a manual connection test whenever you want to recheck access.
 
 Lightship exports a minimal kubeconfig for each selected context and encrypts it inside its
 main-process-owned cluster store. Removing a cluster removes Lightship's encrypted copy; it does not

@@ -10,6 +10,7 @@ import { useThemeStore } from '@renderer/ui/stores/theme-store'
 
 import type { CrdLeaf } from './lib/crd-tree'
 import { lightshipNavTab, navIconFor } from './lib/lightship-navigation'
+import { useClusterNavigation } from './queries/cluster-connection'
 import { useClusters, useOverview } from './queries/use-lightship-data'
 import { useActivityStore } from './stores/activity-store'
 import { useDetailTabStore } from './stores/detail-tab-store'
@@ -55,6 +56,7 @@ function App() {
   // tab's cluster, else the first connected cluster.
   const fallbackCluster = clusters.find((c) => c.id === activeClusterId) ?? clusters[0]
   const termCount = useTerminalsStore((s) => s.sessions.length)
+  const navigateCluster = useClusterNavigation()
   usePaletteHotkey(ui.togglePalette)
 
   // Keep per-tab namespace filters in sync with open tabs: drop entries for tabs
@@ -88,10 +90,15 @@ function App() {
 
   const selectNav = (id: string, label: string, clusterId: string) => {
     const { seedNamespaceFilter, ...tab } = lightshipNavTab(id, label, clusterId)
-    // Pin the last-applied namespace filter onto namespaced tabs as they open, so
-    // each open tab stays independent when the filter later changes elsewhere.
-    if (seedNamespaceFilter) seedNs(tab.id)
-    openTab(tab)
+    if (!('clusterId' in tab.view)) {
+      openTab(tab)
+      return
+    }
+    navigateCluster(clusterId, clusters.find((c) => c.id === clusterId)?.name ?? clusterId, () => {
+      // Pin the last-applied namespace filter onto namespaced tabs as they open.
+      if (seedNamespaceFilter) seedNs(tab.id)
+      openTab(tab)
+    })
   }
 
   const onOpenPod = (clusterId: string, pod: Pod) =>
@@ -185,7 +192,10 @@ function App() {
     })
   }
 
-  const onOpenCrdKind = (clusterId: string, leaf: CrdLeaf) => openCrdInstances(clusterId, leaf)
+  const onOpenCrdKind = (clusterId: string, leaf: CrdLeaf) =>
+    navigateCluster(clusterId, clusters.find((c) => c.id === clusterId)?.name ?? clusterId, () =>
+      openCrdInstances(clusterId, leaf)
+    )
 
   const onOpenResource = (clusterId: string, resourceId: string, row: ResourceRow) => {
     // A CRD row opens a browser of that CRD's live instances (not a YAML detail).

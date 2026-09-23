@@ -1,11 +1,11 @@
 import { test, expect } from '@playwright/test'
 
-import { openApp, navTo } from './helpers'
+import { openApp, navTo, sidebar } from './helpers'
 
 test('navigate Overview / Nodes / Pods and open tabs', async ({ page }) => {
   await openApp(page)
 
-  await navTo(page, 'Overview')
+  await sidebar(page).getByText('e2e-cluster', { exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Recent events' })).toBeVisible()
 
   await navTo(page, 'Nodes')

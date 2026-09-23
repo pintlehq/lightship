@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { Button } from '@renderer/ui/components/button'
 import { Card } from '@renderer/ui/components/card'
 import { Dot } from '@renderer/ui/components/dot'
@@ -7,8 +8,8 @@ import { toast } from '@renderer/ui/components/toaster'
 import { cn } from '@renderer/ui/lib/utils'
 import type { Tone } from '@renderer/ui/lib/types'
 
-import type { ClusterMeta, TestResult } from '../../../shared/ipc-types'
-import { clustersApi } from '../lib/ipc'
+import type { ClusterMeta } from '../../../shared/ipc-types'
+import { checkClusterConnection, useClusterConnections } from '../queries/cluster-connection'
 import {
   useClusters,
   useRemoveCluster,
@@ -17,14 +18,14 @@ import {
 } from '../queries/use-lightship-data'
 import { ConfirmDialog } from './confirm-dialog'
 
-type RowTest = TestResult | 'testing'
 const HEAD =
   'text-left text-2xs uppercase tracking-[0.06em] text-dim font-medium px-3 py-2 bg-background border-b border-border'
 const CELL = 'px-3 py-2.5 border-b border-border/50'
 
 export function ManageClustersView({ onAdd }: { onAdd: () => void }) {
   const { data: clusters = [], isLoading } = useClusters()
-  const [tests, setTests] = useState<Record<string, RowTest>>({})
+  const checks = useClusterConnections(clusters.map((cluster) => cluster.id))
+  const qc = useQueryClient()
   const [confirming, setConfirming] = useState<ClusterMeta | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
@@ -43,22 +44,25 @@ export function ManageClustersView({ onAdd }: { onAdd: () => void }) {
   }
 
   const [syncing, setSyncing] = useState(false)
-  const sync = async (id: string) => {
-    setTests((t) => ({ ...t, [id]: 'testing' }))
-    const result = await clustersApi.test(id)
-    setTests((t) => ({ ...t, [id]: result }))
-  }
+  const sync = (id: string) => checkClusterConnection(qc, id)
   const syncAll = async () => {
     setSyncing(true)
-    await Promise.all(clusters.map((c) => sync(c.id)))
-    setSyncing(false)
-    toast.success(`Synced ${clusters.length} cluster${clusters.length > 1 ? 's' : ''}`)
+    try {
+      const results = await Promise.all(clusters.map((c) => sync(c.id)))
+      const failed = results.filter((result) => !result.ok).length
+      if (failed) toast.error(`${failed} cluster connection${failed > 1 ? 's' : ''} failed`)
+      else toast.success(`Checked ${clusters.length} cluster${clusters.length > 1 ? 's' : ''}`)
+    } finally {
+      setSyncing(false)
+    }
   }
 
-  const healthTone = (id: string): Tone => {
-    const t = tests[id]
-    if (!t || t === 'testing') return 'dim'
-    return t.ok ? 'success' : 'destructive'
+  const healthTone = (index: number): Tone => {
+    const check = checks[index]
+    if (check?.isFetching) return 'primary'
+    if (check?.data?.ok) return 'success'
+    if (check?.data || check?.isError) return 'destructive'
+    return 'dim'
   }
 
   const moveCluster = (index: number, direction: -1 | 1): void => {
@@ -112,11 +116,14 @@ export function ManageClustersView({ onAdd }: { onAdd: () => void }) {
             </thead>
             <tbody>
               {clusters.map((c, index) => {
-                const t = tests[c.id]
+                const check = checks[index]
+                const t = check?.data
+                const testing = check?.isFetching ?? false
+                const error = t?.error ?? (check?.error instanceof Error ? check.error.message : '')
                 return (
                   <tr key={c.id} className="group transition-colors hover:bg-hover">
                     <td className={cn(CELL, 'w-8')}>
-                      <Dot tone={healthTone(c.id)} pulse={t === 'testing'} />
+                      <Dot tone={healthTone(index)} pulse={testing} />
                     </td>
                     <td className={CELL}>
                       {renamingId === c.id ? (
@@ -156,24 +163,21 @@ export function ManageClustersView({ onAdd }: { onAdd: () => void }) {
                     <td className={cn(CELL, 'max-w-[280px] truncate text-muted-foreground')}>
                       {c.server || '—'}
                     </td>
-                    <td className={cn(CELL, 'text-muted-foreground')}>
-                      {t && t !== 'testing' && t.ok ? t.version : '—'}
-                    </td>
+                    <td className={cn(CELL, 'text-muted-foreground')}>{t?.ok ? t.version : '—'}</td>
                     <td className={CELL}>
-                      {t === 'testing' ? (
+                      {testing ? (
                         <span className="text-dim">testing…</span>
-                      ) : t && t.ok ? (
+                      ) : t?.ok ? (
                         <span className="inline-flex items-center gap-1.5 text-success">
                           <Dot tone="success" />
                           connected
                         </span>
-                      ) : t && !t.ok ? (
-                        <span
-                          className="inline-flex items-center gap-1.5 text-destructive"
-                          title={t.error}
-                        >
-                          <Dot tone="destructive" />
-                          error
+                      ) : t || check?.isError ? (
+                        <span className="flex max-w-[240px] items-center gap-1.5 text-destructive">
+                          <Dot tone="destructive" className="shrink-0" />
+                          <span className="truncate" title={error}>
+                            {error || 'Connection failed'}
+                          </span>
                         </span>
                       ) : (
                         <span className="text-faint">not tested</span>

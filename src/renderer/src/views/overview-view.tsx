@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react'
+import { Button } from '@renderer/ui/components/button'
 import { Card } from '@renderer/ui/components/card'
 import { Dot } from '@renderer/ui/components/dot'
+import { Icon } from '@renderer/ui/components/icon'
 
 import { useOverviewBundle } from '../queries/use-lightship-data'
+import { errMsg } from '../lib/errors'
 import { eventTone } from '../lib/event-tone'
 import { Sparkline } from './sparkline'
 import { ViewHeader } from './view-header'
@@ -44,7 +47,15 @@ function TrendCard({
 }
 
 export function OverviewView({ clusterId }: { clusterId: string }) {
-  const { data: bundle, dataUpdatedAt } = useOverviewBundle(clusterId)
+  const {
+    data: bundle,
+    dataUpdatedAt,
+    isError,
+    error,
+    isPending,
+    isFetching,
+    refetch
+  } = useOverviewBundle(clusterId)
   const ov = bundle?.overview
   const events = bundle?.events ?? []
   const [cpuHist, setCpuHist] = useState<number[]>([])
@@ -57,6 +68,31 @@ export function OverviewView({ clusterId }: { clusterId: string }) {
     if (ov.memPct != null) setMemHist((h) => [...h, ov.memPct!].slice(-MAX_POINTS))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataUpdatedAt])
+
+  if (isError) {
+    return (
+      <div className="p-5">
+        <ViewHeader crumbs={['cluster']} title="Overview" />
+        <Card className="flex flex-col items-center gap-3 p-8 text-center font-mono">
+          <Icon name="x" className="h-7 w-7 text-destructive" />
+          <p className="text-[13px] text-destructive">Could not load cluster overview</p>
+          <p className="max-w-full break-words text-[12px] text-dim">{errMsg(error)}</p>
+          <Button variant="outline" size="sm" disabled={isFetching} onClick={() => void refetch()}>
+            {isFetching ? 'Retrying…' : 'Retry'}
+          </Button>
+        </Card>
+      </div>
+    )
+  }
+
+  if (isPending) {
+    return (
+      <div className="p-5">
+        <ViewHeader crumbs={['cluster']} title="Overview" />
+        <Card className="p-8 text-center font-mono text-sm text-dim">Loading overview…</Card>
+      </div>
+    )
+  }
 
   return (
     <div className="p-5">

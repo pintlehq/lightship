@@ -446,6 +446,7 @@ export const useRemoveCluster = () => {
     mutationFn: (id: string) => clustersApi.remove(id),
     onSuccess: (_data, id) => {
       useTabsStore.getState().closeTabsForCluster(id)
+      qc.removeQueries({ queryKey: qk.clusterConnection(id) })
       void qc.invalidateQueries({ queryKey: qk.clusters() })
       toast.success('Cluster removed')
     },

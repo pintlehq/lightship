@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { Sidebar, TreeRow } from '@renderer/ui/shell/sidebar'
 import { Button } from '@renderer/ui/components/button'
 import { ContextMenu } from '@renderer/ui/components/context-menu'
+import { Dot } from '@renderer/ui/components/dot'
 import { Icon } from '@renderer/ui/components/icon'
 import { toast } from '@renderer/ui/components/toaster'
 
@@ -11,6 +12,7 @@ import { LIGHTSHIP_TREE } from '../../data/static'
 import type { CrdLeaf } from '../../lib/crd-tree'
 import { clustersApi } from '../../lib/ipc'
 import { navTabId } from '../../lib/tab-id'
+import { ensureClusterConnection, useClusterConnections } from '../../queries/cluster-connection'
 import { qk } from '../../queries/keys'
 import { useClusters, useRemoveCluster } from '../../queries/use-lightship-data'
 import { useUiStore } from '../../stores/ui-store'
@@ -43,6 +45,7 @@ export function LightshipSidebar({
   onNewTerminal
 }: LightshipSidebarProps) {
   const { data: clusters = [] } = useClusters()
+  const checks = useClusterConnections(clusters.map((cluster) => cluster.id))
   const qc = useQueryClient()
   const sidebarWidth = useUiStore((s) => s.sidebarWidth)
   const setSidebarWidth = useUiStore((s) => s.setSidebarWidth)
@@ -59,12 +62,23 @@ export function LightshipSidebar({
     const k = gkey(clusterId, gid)
     return k in open ? open[k] : (DEFAULT_OPEN[gid] ?? false)
   }
-  const toggleGroup = (clusterId: string, gid: string) =>
+  const toggleGroup = (clusterId: string, gid: string) => {
+    if (gid === 'crd' && !isGroupOpen(clusterId, gid)) {
+      void ensureClusterConnection(qc, clusterId).then((result) => {
+        if (result.ok) setOpen((current) => ({ ...current, [gkey(clusterId, gid)]: true }))
+        else {
+          const name = clusters.find((cluster) => cluster.id === clusterId)?.name ?? clusterId
+          toast.error(`Could not connect to ${name}`, result.error ?? 'Connection failed')
+        }
+      })
+      return
+    }
     setOpen((o) => {
       const k = gkey(clusterId, gid)
       const cur = k in o ? o[k] : (DEFAULT_OPEN[gid] ?? false)
       return { ...o, [k]: !cur }
     })
+  }
 
   // Which cluster trees are expanded — independent of any active tab, so multiple
   // can be open at once. Seeded to the first cluster on first load (below).
@@ -76,6 +90,11 @@ export function LightshipSidebar({
       else next.add(id)
       return next
     })
+
+  const openCluster = (cl: ClusterMeta): void => {
+    setExpanded((current) => new Set(current).add(cl.id))
+    onSelect(cl.id, 'overview', 'Overview')
+  }
 
   const startRename = (cl: ClusterMeta): void => {
     setRenamingId(cl.id)
@@ -183,10 +202,22 @@ export function LightshipSidebar({
             </Button>
           </div>
         ) : (
-          clusters.map((cl) => {
+          clusters.map((cl, index) => {
             const isActive = cl.id === activeClusterId
             const isExpanded = expanded.has(cl.id)
             const renaming = renamingId === cl.id
+            const check = checks[index]
+            const checking = check?.isFetching ?? false
+            const result = check?.data
+            const status = checking
+              ? 'connecting'
+              : result?.ok
+                ? 'connected'
+                : result || check?.isError
+                  ? 'error'
+                  : 'not checked'
+            const error =
+              result?.error ?? (check?.error instanceof Error ? check.error.message : '')
             return (
               <Fragment key={cl.id}>
                 <ContextMenu
@@ -227,17 +258,53 @@ export function LightshipSidebar({
                           cl.name
                         )
                       }
-                      leadingHealth={isActive ? 'primary' : 'dim'}
+                      active={isActive}
                       className="font-medium text-foreground"
-                      onClick={renaming ? undefined : () => toggleCluster(cl.id)}
+                      onClick={renaming ? undefined : () => openCluster(cl)}
                       trailing={
-                        cl.env === 'prod' ? (
-                          <Icon name="lock" className="ml-1 h-3 w-3 text-destructive" />
-                        ) : null
+                        <span
+                          className="ml-auto inline-flex shrink-0 items-center gap-1 text-[10px] text-dim"
+                          title={error || status}
+                          aria-label={`${cl.name}: ${status}${error ? `: ${error}` : ''}`}
+                        >
+                          <Dot
+                            tone={
+                              checking
+                                ? 'primary'
+                                : result?.ok
+                                  ? 'success'
+                                  : status === 'error'
+                                    ? 'destructive'
+                                    : 'dim'
+                            }
+                            pulse={checking}
+                          />
+                          {status !== 'not checked' && status}
+                          {cl.env === 'prod' && (
+                            <Icon name="lock" className="h-3 w-3 text-destructive" />
+                          )}
+                        </span>
                       }
                     />
                   </div>
                 </ContextMenu>
+                {status === 'error' && (
+                  <div
+                    role="alert"
+                    className="mx-3 mb-1 ml-8 flex items-start gap-2 rounded border border-destructive/30 bg-destructive/5 px-2 py-1.5 font-mono text-[10.5px] text-destructive"
+                  >
+                    <span className="min-w-0 flex-1 break-words">
+                      {error || 'Connection failed'}
+                    </span>
+                    <button
+                      type="button"
+                      className="shrink-0 underline underline-offset-2 hover:text-foreground"
+                      onClick={() => openCluster(cl)}
+                    >
+                      Retry
+                    </button>
+                  </div>
+                )}
                 {isExpanded && LIGHTSHIP_TREE.map((n) => renderNode(n, 1, cl.id))}
               </Fragment>
             )

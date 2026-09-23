@@ -20,6 +20,7 @@ export const qk = {
   configData: (clusterId: string | null, ref: ResourceRef) =>
     ['config-data', clusterId ?? null, ref.kind, ref.namespace ?? null, ref.name] as const,
   clusters: () => ['clusters'] as const,
+  clusterConnection: (clusterId: string) => ['cluster-connection', clusterId] as const,
   events: (clusterId?: string | null, ref?: ResourceRef) =>
     [
       'events',
