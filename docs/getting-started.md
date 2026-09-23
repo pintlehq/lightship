@@ -11,6 +11,7 @@ channel yet.
 - A reachable Kubernetes cluster and a kubeconfig containing a usable context
 - An available OS credential store for Electron `safeStorage`
 - `kubectl` on `PATH` if you want to open an exec terminal inside a pod
+- For EKS clusters, an installed AWS CLI signed in to the identity used by the kubeconfig
 
 Lightship uses the Kubernetes JavaScript client for cluster reads, mutations, logs, watches, and
 port forwarding. It does not require `kubectl` for those features. The Helm CLI is not required;

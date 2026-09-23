@@ -2,6 +2,7 @@ import { app, shell, BrowserWindow } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
+import { prepareCliPath } from './cli-path'
 import { registerLightshipIpc } from './ipc'
 import { buildAppMenu } from './menu'
 
@@ -56,6 +57,8 @@ if (!hasSingleInstanceLock) {
   })
 
   app.whenReady().then(() => {
+    prepareCliPath()
+
     // Set app user model id for windows
     electronApp.setAppUserModelId('app.pintle.lightship')
 
