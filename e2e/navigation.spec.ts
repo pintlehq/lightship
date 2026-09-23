@@ -6,6 +6,8 @@ test('navigate Overview / Nodes / Pods and open tabs', async ({ page }) => {
   await openApp(page)
 
   await sidebar(page).getByText('e2e-cluster', { exact: true }).click()
+  await expect(page.getByText('No tab open · ⌘K to search')).toBeVisible()
+  await navTo(page, 'Overview')
   await expect(page.getByRole('heading', { name: 'Recent events' })).toBeVisible()
 
   await navTo(page, 'Nodes')

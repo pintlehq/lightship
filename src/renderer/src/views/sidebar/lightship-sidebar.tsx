@@ -93,7 +93,10 @@ export function LightshipSidebar({
 
   const openCluster = (cl: ClusterMeta): void => {
     setExpanded((current) => new Set(current).add(cl.id))
-    onSelect(cl.id, 'overview', 'Overview')
+    void ensureClusterConnection(qc, cl.id).then((result) => {
+      if (!result.ok)
+        toast.error(`Could not connect to ${cl.name}`, result.error ?? 'Connection failed')
+    })
   }
 
   const startRename = (cl: ClusterMeta): void => {
@@ -216,8 +219,9 @@ export function LightshipSidebar({
                 : result || check?.isError
                   ? 'error'
                   : 'not checked'
-            const error =
-              result?.error ?? (check?.error instanceof Error ? check.error.message : '')
+            const error = checking
+              ? ''
+              : (result?.error ?? (check?.error instanceof Error ? check.error.message : ''))
             return (
               <Fragment key={cl.id}>
                 <ContextMenu
