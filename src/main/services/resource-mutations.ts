@@ -133,12 +133,73 @@ export async function getYaml(clusterId: string, ref: ResourceRef): Promise<stri
   return dumpYaml(live)
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+function requireManifestField(value: unknown, field: string, expected: string): void {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error(`Manifest ${field} is required`)
+  }
+  if (value !== expected) {
+    throw new Error(`Manifest ${field} must match the selected resource`)
+  }
+}
+
+function validateApplyManifest(
+  value: unknown,
+  ref: ResourceRef
+): asserts value is KubernetesObject {
+  const gvk = resolveGvk(ref)
+  if (!gvk) throw new Error(`Unknown resource kind: ${ref.kind}`)
+  if (!isRecord(value)) throw new Error('Manifest must contain one Kubernetes object')
+  requireManifestField(value.apiVersion, 'apiVersion', gvk.apiVersion)
+  requireManifestField(value.kind, 'kind', gvk.kind)
+  if (!isRecord(value.metadata)) throw new Error('Manifest metadata is required')
+  requireManifestField(value.metadata.name, 'metadata.name', ref.name)
+
+  if (gvk.namespaced) {
+    if (!ref.namespace?.trim()) throw new Error('Selected resource namespace is required')
+    requireManifestField(value.metadata.namespace, 'metadata.namespace', ref.namespace)
+  } else {
+    if (ref.namespace !== undefined || Object.hasOwn(value.metadata, 'namespace')) {
+      throw new Error('Cluster-scoped resources must not specify metadata.namespace')
+    }
+  }
+
+  if (
+    typeof value.metadata.resourceVersion !== 'string' ||
+    !value.metadata.resourceVersion.trim()
+  ) {
+    throw new Error('Manifest metadata.resourceVersion is required for a safe replacement')
+  }
+}
+
+function isVersionConflict(error: unknown): boolean {
+  if (!isRecord(error)) return false
+  if (error.code === 409 || error.statusCode === 409) return true
+  return isRecord(error.response) && error.response.statusCode === 409
+}
+
 /** Apply an edited manifest back to the cluster. */
-export async function applyYaml(clusterId: string, _ref: ResourceRef, yaml: string): Promise<void> {
+export async function applyYaml(clusterId: string, ref: ResourceRef, yaml: string): Promise<void> {
+  if (!resolveGvk(ref)) throw new Error(`Unknown resource kind: ${ref.kind}`)
   const { loadYaml } = await loadK8s()
-  const parsed = loadYaml<KubernetesObject>(yaml)
+  let parsed: unknown
+  try {
+    parsed = loadYaml<unknown>(yaml)
+  } catch {
+    throw new Error('Invalid YAML manifest: provide one Kubernetes object')
+  }
+  validateApplyManifest(parsed, ref)
   const obj = await objectApi(clusterId)
-  await obj.replace(parsed)
+  try {
+    await obj.replace(parsed)
+  } catch (error) {
+    if (isVersionConflict(error)) {
+      throw new Error('This resource changed since it was loaded. Reload and review your edits.')
+    }
+    throw error
+  }
 }
 
 /** Create a new resource from a manifest. */

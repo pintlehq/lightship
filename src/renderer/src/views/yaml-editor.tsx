@@ -9,7 +9,8 @@ import { useThemeStore } from '@renderer/ui/stores/theme-store'
 import type { ResourceRef } from '../../../shared/ipc-types'
 import { lightshipSearch } from '../lib/cm-search'
 import { lightshipCmTheme } from '../lib/cm-theme'
-import { useApplyYaml, useResourceYaml } from '../queries/use-lightship-data'
+import { errMsg } from '../lib/errors'
+import { useApplyYaml, useClusters, useResourceYaml } from '../queries/use-lightship-data'
 import { useUiStore } from '../stores/ui-store'
 import { ConfirmDialog } from './confirm-dialog'
 import { WrapToggle } from './wrap-toggle'
@@ -22,6 +23,7 @@ export function YamlEditor({
   refTarget: ResourceRef
 }) {
   const { data, isLoading, isError, error } = useResourceYaml(clusterId, refTarget)
+  const { data: clusters = [] } = useClusters()
   const apply = useApplyYaml(clusterId, refTarget)
   const readOnly = useUiStore((s) => s.readOnly)
   const isDark = useThemeStore((s) => s.resolvedTheme === 'dark')
@@ -33,6 +35,9 @@ export function YamlEditor({
   draftRef.current = draft
   baselineRef.current = baseline
   const dirty = draft !== baseline
+  const clusterName = clusters.find((cluster) => cluster.id === clusterId)?.name ?? clusterId
+  const resourceIdentity = `${refTarget.kind}/${refTarget.name}`
+  const namespace = refTarget.namespace ? `Namespace: ${refTarget.namespace}` : 'Cluster-scoped'
 
   const [confirm, setConfirm] = useState(false)
   const [wrap, setWrap] = useState(true)
@@ -126,8 +131,22 @@ export function YamlEditor({
       <ConfirmDialog
         open={confirm}
         busy={apply.isPending}
-        title={`Apply changes to ${refTarget.name}?`}
-        message="This applies your edited manifest to the live cluster, replacing the current object. A stale edit will be rejected."
+        title={`Apply changes to ${resourceIdentity}?`}
+        message={
+          <div className="space-y-2">
+            <p>Cluster: {clusterName}</p>
+            <p>{namespace}</p>
+            <p>
+              This replaces the selected live resource. Keep its API version, kind, name, and
+              namespace unchanged. Stale versions are rejected.
+            </p>
+            {apply.isError && (
+              <p role="alert" className="text-destructive">
+                {errMsg(apply.error)}
+              </p>
+            )}
+          </div>
+        }
         confirmLabel="Apply"
         onConfirm={runApply}
         onCancel={() => setConfirm(false)}

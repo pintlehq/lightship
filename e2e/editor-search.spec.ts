@@ -22,6 +22,26 @@ test('resource YAML uses the inline find bar with keyboard navigation', async ({
   await expect(search).not.toBeVisible()
 })
 
+test('YAML apply confirms the selected target and cancel keeps the draft', async ({ page }) => {
+  await openApp(page)
+  await navTo(page, 'Pods')
+  await page.locator('tbody tr').first().click()
+  await page.getByRole('button', { name: 'YAML' }).click()
+
+  const editor = page.locator('.cm-content')
+  await editor.click()
+  await page.keyboard.press('End')
+  await page.keyboard.type(' # review')
+  await page.getByRole('button', { name: 'Apply', exact: true }).click()
+
+  await expect(page.getByText('Cluster: e2e-cluster')).toBeVisible()
+  await expect(page.getByText(/Namespace:/)).toBeVisible()
+  await expect(page.getByText(/Keep its API version, kind, name/)).toBeVisible()
+  await page.getByRole('button', { name: 'Cancel' }).click()
+  await expect(editor).toContainText('# review')
+  await expect(page.getByText('unsaved changes')).toBeVisible()
+})
+
 test('find and replace fit in a narrow YAML creation dialog', async ({ page }) => {
   await page.setViewportSize({ width: 700, height: 800 })
   await openApp(page)
