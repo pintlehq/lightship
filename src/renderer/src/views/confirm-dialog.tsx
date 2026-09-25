@@ -11,6 +11,8 @@ export function ConfirmDialog({
   confirmLabel = 'Confirm',
   danger,
   busy,
+  cancellableWhileBusy,
+  cancelLabel,
   progress,
   confirmationText,
   onConfirm,
@@ -22,6 +24,8 @@ export function ConfirmDialog({
   confirmLabel?: string
   danger?: boolean
   busy?: boolean
+  cancellableWhileBusy?: boolean
+  cancelLabel?: string
   progress?: { label: string; done: number; total: number }
   confirmationText?: string
   onConfirm: () => void
@@ -63,8 +67,8 @@ export function ConfirmDialog({
           )}
         </div>
         <div className="flex h-14 items-center justify-end gap-2 border-t border-border bg-chrome px-4">
-          <Button variant="outline" onClick={onCancel} disabled={busy}>
-            Cancel
+          <Button variant="outline" onClick={onCancel} disabled={busy && !cancellableWhileBusy}>
+            {cancelLabel ?? 'Cancel'}
           </Button>
           <Button
             variant={danger ? 'destructive' : 'default'}

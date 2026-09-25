@@ -578,6 +578,45 @@ export const ActivityHistorySchema = z
   .catch({ records: [] })
 export type ActivityHistory = z.infer<typeof ActivityHistorySchema>
 
+export const DrainPodSchema = z.object({
+  namespace: z.string(),
+  name: z.string(),
+  status: z.enum(['skipped', 'blocked', 'eviction-accepted', 'removed', 'failed', 'remaining']),
+  reason: z.string().optional()
+})
+export type DrainPod = z.infer<typeof DrainPodSchema>
+
+export const DrainProgressSchema = z.object({
+  node: z.string(),
+  phase: z.enum(['cordoning', 'listing', 'evicting', 'waiting']),
+  message: z.string(),
+  pods: z.array(DrainPodSchema)
+})
+export type DrainProgress = z.infer<typeof DrainProgressSchema>
+
+export const DrainEventSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('started') }),
+  z.object({ type: z.literal('progress'), progress: DrainProgressSchema })
+])
+export type DrainEvent = z.infer<typeof DrainEventSchema>
+
+export const DrainResultSchema = z.object({
+  clusterId: z.string(),
+  node: z.string(),
+  status: z.enum(['completed', 'failed', 'timed-out', 'cancelled']),
+  reason: z.string().optional(),
+  pods: z.array(DrainPodSchema),
+  remaining: z.array(DrainPodSchema),
+  activityRecord: ActivityRecordSchema.optional(),
+  activityError: z.string().optional()
+})
+export type DrainResult = z.infer<typeof DrainResultSchema>
+
+export type DrainHandle = {
+  result: Promise<DrainResult>
+  cancel(): void
+}
+
 /** One Helm release revision (decoded from its release Secret). */
 export const HelmReleaseSchema = z.object({
   name: z.string(),
@@ -637,8 +676,8 @@ export interface LightshipApi {
     cordon(id: string, name: string): Promise<void>
     /** Clear a node's unschedulable flag. */
     uncordon(id: string, name: string): Promise<void>
-    /** Cordon a node, then evict its pods (skips DaemonSet/mirror/completed pods). */
-    drain(id: string, name: string): Promise<void>
+    /** Cordon and drain a node, reporting progress until eligible pods have gone. */
+    drain(id: string, name: string, onProgress: (progress: DrainProgress) => void): DrainHandle
     /** The live manifest of a single resource, serialized to YAML. */
     getYaml(id: string, ref: ResourceRef): Promise<string>
     /** Apply an edited YAML manifest back to the cluster (kubectl-replace semantics). */

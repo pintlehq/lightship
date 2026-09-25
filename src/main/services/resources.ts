@@ -26,7 +26,6 @@ export {
   cordonNode,
   createYaml,
   deleteResource,
-  drainNode,
   getYaml,
   isEvictable,
   rolloutRestart,

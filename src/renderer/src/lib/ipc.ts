@@ -9,6 +9,8 @@ import type {
   CustomResourceList,
   CustomResourceParams,
   DetectedContext,
+  DrainHandle,
+  DrainProgress,
   HelmRelease,
   LightshipApi,
   LogEvent,
@@ -119,7 +121,10 @@ export const clusterApi = {
     api()!.cluster.scaleResource(id, ref, replicas),
   cordon: (id: string, name: string): Promise<void> => api()!.cluster.cordon(id, name),
   uncordon: (id: string, name: string): Promise<void> => api()!.cluster.uncordon(id, name),
-  drain: (id: string, name: string): Promise<void> => api()!.cluster.drain(id, name),
+  drain: (id: string, name: string, onProgress: (progress: DrainProgress) => void): DrainHandle => {
+    if (!api()) throw new Error('Drain is unavailable without the desktop backend')
+    return api()!.cluster.drain(id, name, onProgress)
+  },
   getYaml: (id: string, ref: ResourceRef): Promise<string> => api()!.cluster.getYaml(id, ref),
   applyYaml: (id: string, ref: ResourceRef, yaml: string): Promise<void> =>
     api()!.cluster.applyYaml(id, ref, yaml),

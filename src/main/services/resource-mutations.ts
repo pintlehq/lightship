@@ -85,38 +85,6 @@ export function isEvictable(p: V1Pod): boolean {
   return true
 }
 
-/** Cordon a node, then best-effort evict its eligible pods. Per-pod failures
- * are logged and skipped - no wait/poll loop. */
-export async function drainNode(clusterId: string, name: string): Promise<void> {
-  await setUnschedulable(clusterId, name, true)
-  const { CoreV1Api } = await loadK8s()
-  const kc = await kcForCluster(clusterId)
-  const core = kc.makeApiClient(CoreV1Api)
-  const pods = await core.listPodForAllNamespaces({ fieldSelector: `spec.nodeName=${name}` })
-  for (const p of pods.items) {
-    if (!isEvictable(p)) continue
-    const podName = p.metadata?.name
-    const ns = p.metadata?.namespace
-    if (!podName || !ns) continue
-    try {
-      await core.createNamespacedPodEviction({
-        name: podName,
-        namespace: ns,
-        body: {
-          apiVersion: 'policy/v1',
-          kind: 'Eviction',
-          metadata: { name: podName, namespace: ns }
-        }
-      })
-    } catch (e) {
-      console.error(
-        `drain ${name}: failed to evict ${ns}/${podName}:`,
-        e instanceof Error ? e.message : e
-      )
-    }
-  }
-}
-
 /** Read a single resource's live manifest and serialize it to YAML. */
 export async function getYaml(clusterId: string, ref: ResourceRef): Promise<string> {
   const gvk = resolveGvk(ref)

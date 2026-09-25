@@ -15,6 +15,7 @@ import {
   CustomResourceListSchema,
   CustomResourceParamsSchema,
   DetectedContextArraySchema,
+  DrainResultSchema,
   HelmReleaseArraySchema,
   LogStreamOptionsSchema,
   PortForwardOptionsSchema,
@@ -36,6 +37,7 @@ import * as store from './services/cluster-store'
 import * as k8s from './services/k8s'
 import * as logs from './services/logs'
 import * as namespaces from './services/namespaces'
+import * as nodeDrain from './services/node-drain'
 import * as portForward from './services/port-forward'
 import * as helm from './services/helm'
 import * as pty from './services/pty'
@@ -178,8 +180,14 @@ export function registerLightshipIpc(): void {
   registerInvokeHandler('cluster:uncordon', parseArgs(Id, Id), z.void(), (_e, id, name) =>
     resources.uncordonNode(id, name)
   )
-  registerInvokeHandler('cluster:drain', parseArgs(Id, Id), z.void(), (_e, id, name) =>
-    resources.drainNode(id, name)
+  registerInvokeHandler(
+    'cluster:drain',
+    parseArgs(Id, Id, Id),
+    DrainResultSchema,
+    (e, subId, id, name) => nodeDrain.startDrain(e.sender, subId, id, name)
+  )
+  registerInvokeHandler('cluster:cancelDrain', parseArgs(Id), z.void(), (e, subId) =>
+    nodeDrain.cancelDrain(e.sender, subId)
   )
   registerInvokeHandler(
     'cluster:getYaml',

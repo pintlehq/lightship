@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 
 import type { LightshipApi } from '../shared/ipc-types'
-import { createSubscription, invoke } from './ipc-helpers'
+import { createDrainOperation, createSubscription, invoke } from './ipc-helpers'
 
 // Per-renderer counters for unique subscription ids.
 let logSeq = 0
@@ -42,7 +42,7 @@ const api: LightshipApi = {
     scaleResource: (id, ref, replicas) => invoke('cluster:scaleResource', id, ref, replicas),
     cordon: (id, name) => invoke('cluster:cordon', id, name),
     uncordon: (id, name) => invoke('cluster:uncordon', id, name),
-    drain: (id, name) => invoke('cluster:drain', id, name),
+    drain: createDrainOperation,
     getYaml: (id, ref) => invoke('cluster:getYaml', id, ref),
     applyYaml: (id, ref, yaml) => invoke('cluster:applyYaml', id, ref, yaml),
     createYaml: (id, yaml) => invoke('cluster:createYaml', id, yaml),
