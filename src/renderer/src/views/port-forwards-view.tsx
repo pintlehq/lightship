@@ -10,6 +10,7 @@ import { ViewHeader } from './view-header'
 const STATUS_TONE: Record<PortForwardStatus, Tone> = {
   starting: 'dim',
   running: 'success',
+  stopping: 'warning',
   error: 'destructive',
   closed: 'warning'
 }
@@ -71,7 +72,12 @@ export function PortForwardsView() {
                       <Icon name="link" className="h-3.5 w-3.5" />
                       Open
                     </Button>
-                    <Button variant="ghost" size="sm" onClick={() => stop(s.id)}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={s.status === 'stopping'}
+                      onClick={() => stop(s.id)}
+                    >
                       <Icon name="x" className="h-3.5 w-3.5" />
                       Stop
                     </Button>

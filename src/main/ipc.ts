@@ -243,20 +243,17 @@ export function registerLightshipIpc(): void {
     z.void(),
     (e, subId, id, opts) => pty.startPty(e.sender, subId, id, opts)
   )
-  registerInvokeHandler(
-    'cluster:ptyInput',
-    parseArgs(Id, z.string()),
-    z.void(),
-    (_e, subId, data) => pty.writePty(subId, data)
+  registerInvokeHandler('cluster:ptyInput', parseArgs(Id, z.string()), z.void(), (e, subId, data) =>
+    pty.writePty(e.sender, subId, data)
   )
   registerInvokeHandler(
     'cluster:ptyResize',
     parseArgs(Id, z.number(), z.number()),
     z.void(),
-    (_e, subId, cols, rows) => pty.resizePty(subId, cols, rows)
+    (e, subId, cols, rows) => pty.resizePty(e.sender, subId, cols, rows)
   )
-  registerInvokeHandler('cluster:stopPty', parseArgs(Id), z.void(), (_e, subId) =>
-    pty.stopPty(subId)
+  registerInvokeHandler('cluster:stopPty', parseArgs(Id), z.void(), (e, subId) =>
+    pty.stopPty(e.sender, subId)
   )
 
   // Port-forward: start opens a local listener proxying to the resolved pod and
@@ -267,8 +264,8 @@ export function registerLightshipIpc(): void {
     z.void(),
     (e, subId, id, ref, opts) => portForward.startPortForward(e.sender, subId, id, ref, opts)
   )
-  registerInvokeHandler('cluster:stopPortForward', parseArgs(Id), z.void(), (_e, subId) =>
-    portForward.stopPortForward(subId)
+  registerInvokeHandler('cluster:stopPortForward', parseArgs(Id), z.void(), (e, subId) =>
+    portForward.stopPortForward(e.sender, subId)
   )
 
   // Live updates: start opens a per-kind informer that pushes reset/deltas/status

@@ -2,10 +2,12 @@ import { useEffect, useRef } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { useThemeStore } from '@renderer/ui/stores/theme-store'
+import { toast } from '@renderer/ui/components/toaster'
 import '@xterm/xterm/css/xterm.css'
 
 import type { TerminalHandle } from '../../../shared/ipc-types'
 import { clusterApi, hasBackend } from '../lib/ipc'
+import { errMsg } from '../lib/errors'
 import type { TerminalSessionMeta } from '../stores/terminals-store'
 
 // Read a design token (space-separated RGB channels) as an xterm color string.
@@ -93,7 +95,9 @@ export function TerminalSession({
 
     return () => {
       ro.disconnect()
-      handleRef.current?.kill()
+      void handleRef.current?.kill().catch((error: unknown) => {
+        toast.error('Failed to stop terminal', errMsg(error))
+      })
       term.dispose()
     }
     // Create once per mounted session; theme/active handled by the effects below.

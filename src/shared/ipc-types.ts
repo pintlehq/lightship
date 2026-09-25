@@ -316,7 +316,7 @@ export type PortForwardEvent = z.infer<typeof PortForwardEventSchema>
 
 /** Handle returned by the preload bridge for an active port-forward. */
 export interface PortForwardHandle {
-  stop(): void
+  stop(): Promise<void>
 }
 
 /** A recent cluster event (from the Kubernetes events API). */
@@ -363,7 +363,7 @@ export type PtyOptions = z.infer<typeof PtyOptionsSchema>
 export interface TerminalHandle {
   write(data: string): void
   resize(cols: number, rows: number): void
-  kill(): void
+  kill(): Promise<void>
 }
 
 /** One container of a pod, for the detail Overview. */

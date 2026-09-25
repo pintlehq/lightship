@@ -75,10 +75,12 @@ export function PortForwardDialog({
             <h2 className="font-mono text-[14px] font-semibold text-foreground">Forward port</h2>
             <p className="mt-1 font-mono text-[12px] text-dim">{`${refTarget.kind}/${name} · ${remotePort}`}</p>
             <div className="mt-4">
-              {!session || session.status === 'starting' ? (
+              {!session ? (
+                <span className="font-mono text-[12.5px] text-dim">Forward closed</span>
+              ) : session.status === 'starting' || session.status === 'stopping' ? (
                 <span className="inline-flex items-center gap-2 font-mono text-[12.5px] text-dim">
                   <Dot tone="dim" pulse />
-                  Starting forward…
+                  {session.status === 'stopping' ? 'Stopping forward…' : 'Starting forward…'}
                 </span>
               ) : session.status === 'error' ? (
                 <span className="font-mono text-[12.5px] text-destructive">

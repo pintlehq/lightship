@@ -30,10 +30,69 @@ export function createSubscription<TEvent>({
   const channel = `${eventPrefix}:${subId}`
   const listener = (_event: unknown, event: TEvent): void => onEvent(event)
   ipcRenderer.on(channel, listener)
-  void invoke<void>(startChannel, subId, ...startArgs)
+  void invoke<void>(startChannel, subId, ...startArgs).catch((error: unknown) => {
+    console.error(`${startChannel} failed`, error)
+  })
   return () => {
     ipcRenderer.removeListener(channel, listener)
-    void invoke<void>(stopChannel, subId)
+    void invoke<void>(stopChannel, subId).catch((error: unknown) => {
+      console.error(`${stopChannel} failed`, error)
+    })
+  }
+}
+
+/** Start acknowledgement means main has registered the session, not that its
+ * asynchronous setup is complete. An early stop waits for that acknowledgement. */
+export function createManagedSubscription<TEvent>({
+  prefix,
+  eventPrefix,
+  startChannel,
+  stopChannel,
+  startArgs,
+  onEvent,
+  errorEvent
+}: {
+  prefix: string
+  eventPrefix: string
+  startChannel: string
+  stopChannel: string
+  startArgs: unknown[]
+  onEvent: (event: TEvent) => void
+  errorEvent: (message: string) => TEvent
+}): { subId: string; stop(): Promise<void>; reportError(error: unknown): void } {
+  const subId = `${prefix}:${randomUUID()}`
+  const channel = `${eventPrefix}:${subId}`
+  let active = true
+  let stopPromise: Promise<void> | undefined
+  const reportError = (error: unknown): void => {
+    if (active) onEvent(errorEvent(error instanceof Error ? error.message : String(error)))
+  }
+  const listener = (_event: unknown, event: TEvent): void => {
+    if (active) onEvent(event)
+  }
+  ipcRenderer.on(channel, listener)
+  const started = invoke<void>(startChannel, subId, ...startArgs).then(
+    () => true,
+    (error: unknown) => {
+      reportError(error)
+      return false
+    }
+  )
+  return {
+    subId,
+    reportError,
+    stop: () => {
+      if (stopPromise) return stopPromise
+      active = false
+      ipcRenderer.removeListener(channel, listener)
+      stopPromise = started
+        .then((registered) => (registered ? invoke<void>(stopChannel, subId) : undefined))
+        .catch((error: unknown) => {
+          stopPromise = undefined // A failed stop can be retried by the owner.
+          throw error
+        })
+      return stopPromise
+    }
   }
 }
 

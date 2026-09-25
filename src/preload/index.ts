@@ -1,14 +1,14 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import { randomUUID } from 'node:crypto'
 import { electronAPI } from '@electron-toolkit/preload'
 
-import type { LightshipApi } from '../shared/ipc-types'
-import { createDrainOperation, createSubscription, invoke } from './ipc-helpers'
-
-// Per-renderer counters for unique subscription ids.
-let logSeq = 0
-let ptySeq = 0
-let pfSeq = 0
-let watchSeq = 0
+import type { LightshipApi, PortForwardEvent, PtyEvent } from '../shared/ipc-types'
+import {
+  createDrainOperation,
+  createManagedSubscription,
+  createSubscription,
+  invoke
+} from './ipc-helpers'
 
 // Curated, typed surface exposed to the renderer as `window.api`.
 const api: LightshipApi = {
@@ -50,7 +50,7 @@ const api: LightshipApi = {
     getConfigData: (id, ref) => invoke('cluster:getConfigData', id, ref),
     applyConfigData: (id, ref, data) => invoke('cluster:applyConfigData', id, ref, data),
     streamLogs: (id, ref, opts, onEvent) => {
-      const subId = `logs:${++logSeq}`
+      const subId = `logs:${randomUUID()}`
       // Subscribe before starting so no early lines are dropped.
       return createSubscription({
         subId,
@@ -62,37 +62,39 @@ const api: LightshipApi = {
       })
     },
     openTerminal: (id, opts, onEvent) => {
-      const subId = `pty:${++ptySeq}`
-      const stop = createSubscription({
-        subId,
+      const session = createManagedSubscription<PtyEvent>({
+        prefix: 'pty',
         eventPrefix: 'cluster:pty',
         startChannel: 'cluster:startPty',
         stopChannel: 'cluster:stopPty',
         startArgs: [id, opts],
-        onEvent
+        onEvent,
+        errorEvent: (message) => ({ type: 'error', message })
       })
       return {
-        write: (data) => void invoke('cluster:ptyInput', subId, data),
-        resize: (cols, rows) => void invoke('cluster:ptyResize', subId, cols, rows),
-        kill: stop
+        write: (data) =>
+          void invoke('cluster:ptyInput', session.subId, data).catch(session.reportError),
+        resize: (cols, rows) =>
+          void invoke('cluster:ptyResize', session.subId, cols, rows).catch(session.reportError),
+        kill: session.stop
       }
     },
     startPortForward: (id, ref, opts, onEvent) => {
-      const subId = `pf:${++pfSeq}`
-      const stop = createSubscription({
-        subId,
+      const session = createManagedSubscription<PortForwardEvent>({
+        prefix: 'pf',
         eventPrefix: 'cluster:pf',
         startChannel: 'cluster:startPortForward',
         stopChannel: 'cluster:stopPortForward',
         startArgs: [id, ref, opts],
-        onEvent
+        onEvent,
+        errorEvent: (message) => ({ type: 'error', message })
       })
       return {
-        stop
+        stop: session.stop
       }
     },
     watch: (id, kind, onEvent) => {
-      const subId = `watch:${++watchSeq}`
+      const subId = `watch:${randomUUID()}`
       return createSubscription({
         subId,
         eventPrefix: 'cluster:watch',
