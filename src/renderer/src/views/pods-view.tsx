@@ -19,7 +19,9 @@ import { podColumns } from '../columns/pod-columns'
 import { POD_STATUS } from '../data/static'
 import { errMsg } from '../lib/errors'
 import { clusterApi } from '../lib/ipc'
+import { recordActivity } from '../lib/record-activity'
 import { qk } from '../queries/keys'
+import { invalidateMutation } from '../queries/mutation-invalidation'
 import { useNamespaces, usePods } from '../queries/use-lightship-data'
 import { useNamespaceFilterStore } from '../stores/namespace-filter-store'
 import { useUiStore } from '../stores/ui-store'
@@ -114,17 +116,47 @@ export function PodsView({
     if (!pending || !clusterId) return
     const { pods: target } = pending
     setBusy(true)
+    const changed = [] as Array<{ kind: string; namespace: string; name: string }>
+    let failure: unknown = null
+    let failed = false
     try {
       for (const p of target) {
-        await clusterApi.deleteResource(clusterId, { kind: 'pods', namespace: p.ns, name: p.name })
+        const ref = { kind: 'pods', namespace: p.ns, name: p.name }
+        await clusterApi.deleteResource(clusterId, ref)
+        changed.push(ref)
       }
-      await qc.invalidateQueries({ queryKey: qk.pods(clusterId) })
-      if (pending.fromSelection) setRowSelection({})
-      toast.success(`Deleted ${target.length} pod${target.length > 1 ? 's' : ''}`)
     } catch (e) {
       console.error(e)
-      toast.error('Failed to delete pods', errMsg(e))
+      failure = e
+      failed = true
     } finally {
+      if (changed.length)
+        await invalidateMutation(qc, clusterId, {
+          type: 'resource',
+          operation: 'delete',
+          refs: changed
+        })
+      if (failed) {
+        toast.error(
+          changed.length ? `Deleted ${changed.length}, then stopped` : 'Failed to delete pods',
+          errMsg(failure)
+        )
+      } else {
+        if (pending.fromSelection) setRowSelection({})
+        toast.success(`Deleted ${target.length} pod${target.length > 1 ? 's' : ''}`)
+      }
+      recordActivity({
+        clusterId,
+        action: 'delete',
+        kind: 'pods',
+        namespace: target.length === 1 ? target[0]?.ns : undefined,
+        name: target.length === 1 ? target[0]?.name : undefined,
+        count: target.length,
+        outcome: failed ? 'error' : 'success',
+        message: failed
+          ? `${changed.length} deleted, ${target.length - changed.length} not deleted`
+          : undefined
+      })
       setBusy(false)
       setPending(null)
     }

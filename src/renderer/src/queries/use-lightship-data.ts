@@ -38,6 +38,7 @@ import { recordActivity } from '../lib/record-activity'
 import { useTabsStore } from '../stores/tabs-store'
 import { useUiStore } from '../stores/ui-store'
 import { qk } from './keys'
+import { invalidateMutation } from './mutation-invalidation'
 
 // Subscribe a query key to a live informer: a `reset` replaces the cached list, a
 // `deltas` batch is folded in by identity, and `status` drives the live indicator.
@@ -146,25 +147,18 @@ export const useNamespaceDetail = (clusterId: string | null, name: string) =>
     refetchInterval: 30_000
   })
 
-function invalidateNamespaces(
-  qc: ReturnType<typeof useQueryClient>,
-  clusterId: string | null,
-  name?: string
-): void {
-  void qc.invalidateQueries({ queryKey: qk.namespaceSummaries(clusterId) })
-  void qc.invalidateQueries({ queryKey: qk.resource(clusterId, 'namespaces') })
-  void qc.invalidateQueries({ queryKey: qk.overview(clusterId) })
-  void qc.invalidateQueries({ queryKey: qk.overviewBundle(clusterId) })
-  if (name) void qc.invalidateQueries({ queryKey: qk.namespaceDetail(clusterId, name) })
-}
-
 export const useCreateNamespace = (clusterId: string | null) => {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (input: NamespaceCreateInput) => createNamespaceResource(clusterId, input),
     onSuccess: (_data, input) => {
       const name = input.mode === 'form' ? input.name : undefined
-      invalidateNamespaces(qc, clusterId, name)
+      if (clusterId)
+        void invalidateMutation(qc, clusterId, {
+          type: 'namespace',
+          operation: 'create',
+          names: name ? [name] : []
+        })
       toast.success(`Created namespace${name ? ` ${name}` : ''}`)
       if (clusterId)
         recordActivity({
@@ -197,7 +191,12 @@ export const useDeleteNamespace = (clusterId: string | null) => {
   return useMutation({
     mutationFn: (name: string) => deleteNamespaceResource(clusterId, name),
     onSuccess: (_data, name) => {
-      invalidateNamespaces(qc, clusterId, name)
+      if (clusterId)
+        void invalidateMutation(qc, clusterId, {
+          type: 'namespace',
+          operation: 'delete',
+          names: [name]
+        })
       toast.success(`Namespace ${name} is being deleted`)
       if (clusterId)
         recordActivity({
@@ -276,10 +275,12 @@ export const useApplyYaml = (clusterId: string | null, ref: ResourceRef) => {
   return useMutation({
     mutationFn: (yaml: string) => applyResourceYaml(clusterId, ref, yaml),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.yaml(clusterId, ref) })
-      void qc.invalidateQueries({
-        queryKey: ref.kind === 'pods' ? qk.pods(clusterId) : qk.resource(clusterId, ref.kind)
-      })
+      if (clusterId)
+        void invalidateMutation(qc, clusterId, {
+          type: 'resource',
+          operation: 'apply',
+          refs: [ref]
+        })
       toast.success(`Applied ${ref.kind}/${ref.name}`)
       if (clusterId)
         recordActivity({
@@ -311,23 +312,26 @@ export const useApplyYaml = (clusterId: string | null, ref: ResourceRef) => {
 
 /** Create a resource from a pasted manifest, then refetch the matching list. The
  *  ref (kind/name/namespace) is parsed from the manifest at submit time. */
-export const useCreateFromYaml = (clusterId: string | null, kind: string) => {
+export const useCreateFromYaml = (clusterId: string | null) => {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ yaml }: { ref: ResourceRef; yaml: string }) =>
       createResourceYaml(clusterId, yaml),
-    onSuccess: (_data, { ref }) => {
-      void qc.invalidateQueries({
-        queryKey: kind === 'pods' ? qk.pods(clusterId) : qk.resource(clusterId, kind)
-      })
-      toast.success(`Created ${ref.kind}/${ref.name}`)
+    onSuccess: (createdRef) => {
+      if (clusterId)
+        void invalidateMutation(qc, clusterId, {
+          type: 'resource',
+          operation: 'create',
+          refs: [createdRef]
+        })
+      toast.success(`Created ${createdRef.kind}/${createdRef.name}`)
       if (clusterId)
         recordActivity({
           clusterId,
           action: 'create-yaml',
-          kind: ref.kind,
-          namespace: ref.namespace,
-          name: ref.name,
+          kind: createdRef.kind,
+          namespace: createdRef.namespace,
+          name: createdRef.name,
           count: 1,
           outcome: 'success'
         })
@@ -394,9 +398,12 @@ export const useApplyConfigData = (clusterId: string | null, ref: ResourceRef) =
         toast.info('Data is already up to date')
         return
       }
-      void qc.invalidateQueries({ queryKey: qk.configData(clusterId, ref) })
-      void qc.invalidateQueries({ queryKey: qk.yaml(clusterId, ref) })
-      void qc.invalidateQueries({ queryKey: qk.resource(clusterId, ref.kind) })
+      if (clusterId)
+        void invalidateMutation(qc, clusterId, {
+          type: 'resource',
+          operation: 'data',
+          refs: [ref]
+        })
       toast.success(`Saved ${ref.kind}/${ref.name}`)
       if (clusterId)
         recordActivity({

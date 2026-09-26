@@ -1,12 +1,22 @@
 import type { ActivityInput } from '../../../shared/ipc-types'
+import { toast } from '@renderer/ui/components/toaster'
 import { useActivityStore } from '../stores/activity-store'
 import { activityApi } from './ipc'
 
-/** Fire-and-forget: persist one mutating action and surface it in the open
- *  History tab. Never blocks or throws into the mutation path. Without a backend
- *  (plain browser) the record call no-ops and nothing is added. */
+/** Keep a failed record available for retry without repeating the Kubernetes action. */
+export function queueFailedActivity(input: ActivityInput): void {
+  useActivityStore.getState().enqueueFailed(input)
+  toast.error('Activity history was not saved', 'Retry the record from History.')
+}
+
+/** History persistence never changes the Kubernetes mutation's outcome. */
 export function recordActivity(input: ActivityInput): void {
-  void activityApi.record(input).then((rec) => {
-    if (rec) useActivityStore.getState().prepend(rec)
-  })
+  void (async () => {
+    try {
+      const rec = await activityApi.record(input)
+      if (rec) useActivityStore.getState().prepend(rec)
+    } catch {
+      queueFailedActivity(input)
+    }
+  })()
 }

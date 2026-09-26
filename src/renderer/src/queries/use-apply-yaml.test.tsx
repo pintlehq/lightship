@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   apply: vi.fn(),
+  create: vi.fn(),
   record: vi.fn(),
   success: vi.fn(),
   error: vi.fn()
@@ -12,7 +13,8 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../data/fetchers', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../data/fetchers')>()),
-  applyResourceYaml: mocks.apply
+  applyResourceYaml: mocks.apply,
+  createResourceYaml: mocks.create
 }))
 vi.mock('../lib/record-activity', () => ({ recordActivity: mocks.record }))
 vi.mock('@renderer/ui/components/toaster', () => ({
@@ -20,7 +22,7 @@ vi.mock('@renderer/ui/components/toaster', () => ({
 }))
 
 import { qk } from './keys'
-import { useApplyYaml } from './use-lightship-data'
+import { useApplyYaml, useCreateFromYaml } from './use-lightship-data'
 
 const ref = { kind: 'deployments', namespace: 'web', name: 'api' }
 
@@ -78,6 +80,37 @@ describe('useApplyYaml', () => {
         name: 'api',
         outcome: 'error'
       })
+    )
+  })
+})
+
+describe('useCreateFromYaml', () => {
+  it('refreshes and records the server-created identity, not the dialog guess', async () => {
+    const created = {
+      kind: 'Widget',
+      apiVersion: 'example.com/v1',
+      namespace: 'web',
+      name: 'actual'
+    }
+    mocks.create.mockResolvedValue(created)
+    const qc = new QueryClient({ defaultOptions: { mutations: { retry: false } } })
+    const invalidate = vi.spyOn(qc, 'invalidateQueries')
+    const { result } = renderHook(() => useCreateFromYaml('cluster-a'), {
+      wrapper: wrapper(qc)
+    })
+
+    await act(async () => {
+      await result.current.mutateAsync({
+        yaml: 'apiVersion: example.com/v1\nkind: Widget',
+        ref: { kind: 'pods', namespace: 'default', name: 'guessed' }
+      })
+    })
+
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: ['custom-resource', 'cluster-a', 'example.com', 'v1']
+    })
+    expect(mocks.record).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'Widget', namespace: 'web', name: 'actual' })
     )
   })
 })

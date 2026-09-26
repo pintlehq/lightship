@@ -128,7 +128,8 @@ export const clusterApi = {
   getYaml: (id: string, ref: ResourceRef): Promise<string> => api()!.cluster.getYaml(id, ref),
   applyYaml: (id: string, ref: ResourceRef, yaml: string): Promise<void> =>
     api()!.cluster.applyYaml(id, ref, yaml),
-  createYaml: (id: string, yaml: string): Promise<void> => api()!.cluster.createYaml(id, yaml),
+  createYaml: (id: string, yaml: string): Promise<ResourceRef> =>
+    api()!.cluster.createYaml(id, yaml),
   getResourceDetail: (id: string, ref: ResourceRef): Promise<ResourceDetail> =>
     api()!.cluster.getResourceDetail(id, ref),
   getConfigData: (id: string, ref: ResourceRef): Promise<ConfigData> =>

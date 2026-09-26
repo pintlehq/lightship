@@ -6,7 +6,7 @@ import type { ResourceRef, ResourceRow } from '../../../shared/ipc-types'
 import { errMsg } from '../lib/errors'
 import { clusterApi } from '../lib/ipc'
 import { recordActivity } from '../lib/record-activity'
-import { qk } from '../queries/keys'
+import { invalidateMutation } from '../queries/mutation-invalidation'
 
 type ResourceBatchAction = 'delete' | 'restart'
 
@@ -58,12 +58,14 @@ export function useResourceActions({
     let ok = 0
     let failed = 0
     let lastErr: unknown = null
+    const changed: ResourceRef[] = []
     for (const r of rows) {
       const ref: ResourceRef = { kind: resourceId, namespace: r.namespace, name: r.name }
       try {
         if (op === 'delete') await clusterApi.deleteResource(clusterId, ref)
         else await clusterApi.rolloutRestart(clusterId, ref)
         ok++
+        changed.push(ref)
       } catch (e) {
         console.error(e)
         failed++
@@ -72,7 +74,12 @@ export function useResourceActions({
       setProgress({ label: op === 'delete' ? 'Deleting' : 'Restarting', done: ok + failed, total })
     }
 
-    await qc.invalidateQueries({ queryKey: qk.resource(clusterId, resourceId) })
+    if (changed.length)
+      await invalidateMutation(qc, clusterId, {
+        type: 'resource',
+        operation: op,
+        refs: changed
+      })
     if (pending.fromSelection) onSelectionActionComplete()
     if (failed === 0) toast.success(`${past} ${ok} ${noun}`)
     else if (ok === 0)

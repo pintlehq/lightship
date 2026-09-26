@@ -696,8 +696,8 @@ export interface LightshipApi {
     getYaml(id: string, ref: ResourceRef): Promise<string>
     /** Apply an edited YAML manifest back to the cluster (kubectl-replace semantics). */
     applyYaml(id: string, ref: ResourceRef, yaml: string): Promise<void>
-    /** Create a new resource from a manifest (POST). */
-    createYaml(id: string, yaml: string): Promise<void>
+    /** Create a new resource and return its server-confirmed identity. */
+    createYaml(id: string, yaml: string): Promise<ResourceRef>
     /** Live object fields (labels, and for pods containers/QoS/limits) for the Overview tab. */
     getResourceDetail(id: string, ref: ResourceRef): Promise<ResourceDetail>
     /** The decoded key/value data of a ConfigMap or Secret. */

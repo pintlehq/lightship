@@ -7,7 +7,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const rec = vi.hoisted(() => ({
   del: [] as Array<Record<string, unknown>>,
   patch: [] as Array<Record<string, unknown>>,
-  create: [] as Array<Record<string, unknown>>
+  create: [] as Array<Record<string, unknown>>,
+  createResult: {
+    apiVersion: 'apps/v1',
+    kind: 'Deployment',
+    metadata: { name: 'api', namespace: 'web' }
+  } as { apiVersion: string; kind: string; metadata: { name: string; namespace?: string } }
 }))
 
 vi.mock('./k8s', () => ({
@@ -27,6 +32,7 @@ vi.mock('./k8s', () => ({
         },
         create: async (obj: Record<string, unknown>) => {
           rec.create.push(obj)
+          return rec.createResult
         }
       })
     }
@@ -239,6 +245,11 @@ describe('mutation GVK contract (no cluster I/O)', () => {
   beforeEach(() => {
     rec.del.length = 0
     rec.patch.length = 0
+    rec.createResult = {
+      apiVersion: 'apps/v1',
+      kind: 'Deployment',
+      metadata: { name: 'api', namespace: 'web' }
+    }
   })
 
   it('deleteResource maps the tree id to apiVersion/kind with namespace', async () => {
@@ -326,9 +337,25 @@ describe('mutation GVK contract (no cluster I/O)', () => {
   })
 
   it('createYaml POSTs the parsed manifest via create (not replace)', async () => {
-    await createYaml('c1', 'apiVersion: apps/v1\nkind: Deployment')
+    const ref = await createYaml('c1', 'apiVersion: apps/v1\nkind: Deployment')
     expect(rec.create.at(-1)).toEqual({ __yaml: 'apiVersion: apps/v1\nkind: Deployment' })
     expect(rec.patch).toHaveLength(0)
+    expect(ref).toEqual({ kind: 'deployments', namespace: 'web', name: 'api' })
+  })
+
+  it('uses the server-confirmed custom identity even if the draft came from another list', async () => {
+    rec.createResult = {
+      apiVersion: 'example.com/v1',
+      kind: 'Widget',
+      metadata: { name: 'created-widget', namespace: 'apps' }
+    }
+    const ref = await createYaml('c1', 'apiVersion: v1\nkind: Pod')
+    expect(ref).toEqual({
+      kind: 'Widget',
+      apiVersion: 'example.com/v1',
+      namespace: 'apps',
+      name: 'created-widget'
+    })
   })
 
   it('cordonNode patches the node as unschedulable', async () => {

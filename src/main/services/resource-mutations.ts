@@ -170,10 +170,25 @@ export async function applyYaml(clusterId: string, ref: ResourceRef, yaml: strin
   }
 }
 
-/** Create a new resource from a manifest. */
-export async function createYaml(clusterId: string, yaml: string): Promise<void> {
+/** Create a new resource and return the identity confirmed by the API server. */
+export async function createYaml(clusterId: string, yaml: string): Promise<ResourceRef> {
   const { loadYaml } = await loadK8s()
   const parsed = loadYaml<KubernetesObject>(yaml)
   const obj = await objectApi(clusterId)
-  await obj.create(parsed)
+  const created = await obj.create(parsed)
+  const apiVersion = created.apiVersion
+  const kind = created.kind
+  const name = created.metadata?.name
+  if (!apiVersion || !kind || !name) {
+    throw new Error('Created resource response has no identity; refresh the resource lists')
+  }
+  const builtIn = Object.entries(GVK).find(
+    ([, gvk]) => gvk.apiVersion === apiVersion && gvk.kind === kind
+  )
+  return {
+    kind: builtIn?.[0] ?? kind,
+    name,
+    namespace: created.metadata?.namespace,
+    ...(builtIn ? {} : { apiVersion })
+  }
 }

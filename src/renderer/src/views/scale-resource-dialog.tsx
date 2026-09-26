@@ -10,7 +10,7 @@ import type { ResourceRef, ResourceRow } from '../../../shared/ipc-types'
 import { errMsg } from '../lib/errors'
 import { clusterApi } from '../lib/ipc'
 import { recordActivity } from '../lib/record-activity'
-import { qk } from '../queries/keys'
+import { invalidateMutation } from '../queries/mutation-invalidation'
 
 export function desiredReplicasFromReady(ready?: string): string {
   const match = /^\s*\d+\s*\/\s*(\d+)\s*$/.exec(ready ?? '')
@@ -81,6 +81,7 @@ export function ScaleResourceDialog({
     let ok = 0
     let failed = 0
     let lastErr: unknown = null
+    const changed: ResourceRef[] = []
     try {
       for (const target of targets) {
         const ref: ResourceRef = {
@@ -92,6 +93,7 @@ export function ScaleResourceDialog({
           if (onScale) await onScale(ref, value)
           else await clusterApi.scaleResource(clusterId, ref, value)
           ok++
+          changed.push(ref)
         } catch (e) {
           console.error(e)
           failed++
@@ -100,14 +102,12 @@ export function ScaleResourceDialog({
         if (targets.length > 1) setProgress({ done: ok + failed, total: targets.length })
       }
       const first = targets[0]!
-      await qc.invalidateQueries({ queryKey: qk.resource(clusterId, resourceId) })
-      if (targets.length === 1 && first) {
-        const ref: ResourceRef = { kind: resourceId, namespace: first.namespace, name: first.name }
-        await Promise.all([
-          qc.invalidateQueries({ queryKey: qk.yaml(clusterId, ref) }),
-          qc.invalidateQueries({ queryKey: qk.detail(clusterId, ref) })
-        ])
-      }
+      if (changed.length)
+        await invalidateMutation(qc, clusterId, {
+          type: 'resource',
+          operation: 'scale',
+          refs: changed
+        })
       if (failed === targets.length) throw lastErr ?? new Error('Failed to scale')
       if (failed === 0)
         toast.success(

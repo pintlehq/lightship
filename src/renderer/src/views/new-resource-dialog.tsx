@@ -59,7 +59,7 @@ export function NewResourceDialog({
   onClose: () => void
   defaultNamespace?: string
 }) {
-  const create = useCreateFromYaml(clusterId, kind)
+  const create = useCreateFromYaml(clusterId)
   const readOnly = useUiStore((s) => s.readOnly)
   const isDark = useThemeStore((s) => s.resolvedTheme === 'dark')
   const cmTheme = useMemo(() => lightshipCmTheme(isDark), [isDark])

@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { ResourceRef, ResourceRow } from '../../../shared/ipc-types'
+import { qk } from '../queries/keys'
 import { ScaleResourceDialog } from './scale-resource-dialog'
 
 const row: ResourceRow = {
@@ -51,7 +52,7 @@ function renderDialog({
       />
     </QueryClientProvider>
   )
-  return { onScale: scale, onClose }
+  return { onScale: scale, onClose, qc }
 }
 
 describe('ScaleResourceDialog', () => {
@@ -147,5 +148,31 @@ describe('ScaleResourceDialog', () => {
     await user.click(screen.getByRole('button', { name: 'Scale' }))
 
     await waitFor(() => expect(onComplete).toHaveBeenCalledOnce())
+  })
+
+  it('refreshes only successfully scaled details after a partial bulk result', async () => {
+    const user = userEvent.setup()
+    const onScale = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('denied'))
+    const { qc } = renderDialog({ rows: [row, rowTwo], onScale })
+    const first = { kind: 'deployments', namespace: 'web', name: 'api' }
+    const second = { kind: 'deployments', namespace: 'web', name: 'worker' }
+    qc.setQueryData(qk.yaml('cluster-a', first), 'old')
+    qc.setQueryData(qk.yaml('cluster-a', second), 'old')
+
+    await user.clear(screen.getByLabelText('Replicas'))
+    await user.type(screen.getByLabelText('Replicas'), '6')
+    await user.click(screen.getByRole('button', { name: 'Scale' }))
+    await waitFor(() => expect(onScale).toHaveBeenCalledTimes(2))
+    await waitFor(() =>
+      expect(
+        qc.getQueryCache().find({ queryKey: qk.yaml('cluster-a', first) })?.state.isInvalidated
+      ).toBe(true)
+    )
+    expect(
+      qc.getQueryCache().find({ queryKey: qk.yaml('cluster-a', second) })?.state.isInvalidated
+    ).toBe(false)
   })
 })

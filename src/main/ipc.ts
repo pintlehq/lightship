@@ -204,8 +204,11 @@ export function registerLightshipIpc(): void {
     z.void(),
     (_e, id, ref, yaml) => resources.applyYaml(id, ref, yaml)
   )
-  registerInvokeHandler('cluster:createYaml', parseArgs(Id, z.string()), z.void(), (_e, id, yaml) =>
-    resources.createYaml(id, yaml)
+  registerInvokeHandler(
+    'cluster:createYaml',
+    parseArgs(Id, z.string()),
+    ResourceRefSchema,
+    (_e, id, yaml) => resources.createYaml(id, yaml)
   )
   registerInvokeHandler(
     'cluster:getResourceDetail',

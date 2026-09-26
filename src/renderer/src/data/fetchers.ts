@@ -351,7 +351,10 @@ export async function applyResourceYaml(
   return clusterApi.applyYaml(clusterId, ref, yaml)
 }
 
-export async function createResourceYaml(clusterId: string | null, yaml: string): Promise<void> {
+export async function createResourceYaml(
+  clusterId: string | null,
+  yaml: string
+): Promise<ResourceRef> {
   if (!hasBackend())
     throw new Error('Backend unavailable — run inside the Electron app to create resources')
   if (!clusterId) throw new Error('No active cluster')

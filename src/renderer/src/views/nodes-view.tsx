@@ -23,9 +23,10 @@ import { toast } from '@renderer/ui/components/toaster'
 import { nodeColumns } from '../columns/node-columns'
 import { NODE_STATUS } from '../data/static'
 import { errMsg } from '../lib/errors'
-import { activityApi, clusterApi } from '../lib/ipc'
-import { recordActivity } from '../lib/record-activity'
+import { clusterApi } from '../lib/ipc'
+import { queueFailedActivity, recordActivity } from '../lib/record-activity'
 import { qk } from '../queries/keys'
+import { invalidateMutation } from '../queries/mutation-invalidation'
 import { useClusters, useNodes } from '../queries/use-lightship-data'
 import { useUiStore } from '../stores/ui-store'
 import { useActivityStore } from '../stores/activity-store'
@@ -173,6 +174,7 @@ export function NodesView({
     const { op, nodes: target } = pending
     const noun = `${target.length} node${target.length > 1 ? 's' : ''}`
     const done = { cordon: 'Cordoned', uncordon: 'Uncordoned', drain: 'Drained' }[op]
+    const changedNodes: string[] = []
     setBusy(true)
     try {
       if (op === 'drain') {
@@ -196,34 +198,37 @@ export function NodesView({
               remaining: []
             }
             // Startup failures never reach the main-process operation recorder.
-            try {
-              const activityRecord = await activityApi.record({
-                clusterId,
-                action: 'drain',
-                kind: 'nodes',
-                name: node.name,
-                count: 1,
-                outcome: 'error',
-                message: result.reason
-              })
-              if (activityRecord) useActivityStore.getState().prepend(activityRecord)
-            } catch (historyError) {
-              toast.error('Drain history unavailable', errMsg(historyError))
-            }
+            recordActivity({
+              clusterId,
+              action: 'drain',
+              kind: 'nodes',
+              name: node.name,
+              count: 1,
+              outcome: 'error',
+              message: result.reason
+            })
           } finally {
             activeDrain.current = null
-            await Promise.all([
-              qc.invalidateQueries({ queryKey: qk.nodes(clusterId) }),
-              qc.invalidateQueries({ queryKey: qk.nodeDetail(clusterId, node.name) }),
-              qc.invalidateQueries({ queryKey: qk.pods(clusterId) }),
-              qc.invalidateQueries({ queryKey: qk.resource(clusterId, 'pods') }),
-              qc.invalidateQueries({ queryKey: qk.overview(clusterId) }),
-              qc.invalidateQueries({ queryKey: qk.overviewBundle(clusterId) }),
-              qc.invalidateQueries({ queryKey: qk.namespaceSummaries(clusterId) })
-            ])
           }
+          await invalidateMutation(qc, clusterId, {
+            type: 'node',
+            operation: 'drain',
+            names: [node.name],
+            namespaces: [
+              ...new Set([...result.pods, ...result.remaining].map((pod) => pod.namespace))
+            ]
+          })
           if (result.activityRecord) useActivityStore.getState().prepend(result.activityRecord)
-          if (result.activityError) toast.error('Drain history unavailable', result.activityError)
+          if (result.activityError)
+            queueFailedActivity({
+              clusterId,
+              action: 'drain',
+              kind: 'nodes',
+              name: node.name,
+              count: 1,
+              outcome: result.status === 'completed' ? 'success' : 'error',
+              message: result.reason ?? 'All eligible pods left the node'
+            })
           if (result.status !== 'completed') {
             interrupted = result
             break
@@ -247,8 +252,9 @@ export function NodesView({
       for (const n of target) {
         if (op === 'cordon') await clusterApi.cordon(clusterId, n.name)
         else if (op === 'uncordon') await clusterApi.uncordon(clusterId, n.name)
+        changedNodes.push(n.name)
       }
-      await qc.invalidateQueries({ queryKey: qk.nodes(clusterId) })
+      await invalidateMutation(qc, clusterId, { type: 'node', operation: op, names: changedNodes })
       if (pending.fromSelection) setRowSelection({})
       toast.success(`${done} ${noun}`)
       recordActivity({
@@ -261,6 +267,12 @@ export function NodesView({
       })
     } catch (e) {
       console.error(e)
+      if (op !== 'drain' && changedNodes.length)
+        await invalidateMutation(qc, clusterId, {
+          type: 'node',
+          operation: op,
+          names: changedNodes
+        })
       toast.error(`Failed to ${op}`, errMsg(e))
       recordActivity({
         clusterId,
@@ -269,7 +281,9 @@ export function NodesView({
         name: target.length === 1 ? target[0].name : undefined,
         count: target.length,
         outcome: 'error',
-        message: errMsg(e)
+        message: changedNodes.length
+          ? `${changedNodes.length} changed, ${target.length - changedNodes.length} not changed: ${errMsg(e)}`
+          : errMsg(e)
       })
     } finally {
       setBusy(false)
