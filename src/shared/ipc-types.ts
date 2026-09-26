@@ -482,9 +482,23 @@ export type LogStreamOptions = z.infer<typeof LogStreamOptionsSchema>
 export const ConfigDataSchema = z.object({
   secret: z.boolean(),
   data: z.record(z.string(), z.string()),
-  binaryKeys: z.array(z.string())
+  binaryKeys: z.array(z.string()),
+  resourceVersion: z.string().min(1)
 })
 export type ConfigData = z.infer<typeof ConfigDataSchema>
+
+export const ConfigDataUpdateSchema = z.object({
+  resourceVersion: z.string().min(1),
+  data: z.record(z.string(), z.string())
+})
+export type ConfigDataUpdate = z.infer<typeof ConfigDataUpdateSchema>
+
+export const ConfigDataSaveResultSchema = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('saved'), current: ConfigDataSchema }),
+  z.object({ status: z.literal('unchanged'), current: ConfigDataSchema }),
+  z.object({ status: z.literal('conflict'), current: ConfigDataSchema })
+])
+export type ConfigDataSaveResult = z.infer<typeof ConfigDataSaveResultSchema>
 
 /** One row in a live watch stream. Which concrete shape it is depends on the
  *  watched kind: `pods` → Pod, `nodes` → NodeRow, every other kind → ResourceRow.
@@ -688,8 +702,12 @@ export interface LightshipApi {
     getResourceDetail(id: string, ref: ResourceRef): Promise<ResourceDetail>
     /** The decoded key/value data of a ConfigMap or Secret. */
     getConfigData(id: string, ref: ResourceRef): Promise<ConfigData>
-    /** Replace the text data of a ConfigMap or Secret (binary keys preserved). */
-    applyConfigData(id: string, ref: ResourceRef, data: Record<string, string>): Promise<void>
+    /** Replace text data only when the originally edited resource version is current. */
+    applyConfigData(
+      id: string,
+      ref: ResourceRef,
+      update: ConfigDataUpdate
+    ): Promise<ConfigDataSaveResult>
     /** Stream live logs for a pod (or every pod owned by a workload). Tail-follows
      *  in real time; returns an unsubscribe fn that stops the underlying streams. */
     streamLogs(

@@ -142,7 +142,7 @@ function validateApplyManifest(
   }
 }
 
-function isVersionConflict(error: unknown): boolean {
+export function isVersionConflict(error: unknown): boolean {
   if (!isRecord(error)) return false
   if (error.code === 409 || error.statusCode === 409) return true
   return isRecord(error.response) && error.response.statusCode === 409

@@ -4,6 +4,8 @@ import type { KubeConfig, KubernetesObject } from '@kubernetes/client-node'
 
 import type {
   ConfigData,
+  ConfigDataSaveResult,
+  ConfigDataUpdate,
   ContainerInfo,
   CustomResourceList,
   CustomResourceParams,
@@ -16,7 +18,7 @@ import type {
 import { kcForCluster, loadK8s } from './k8s'
 import { GVK, resolveGvk } from './resource-gvk'
 import { base, type Meta, mapPod, RESOURCE_MAPPERS } from './resource-mappers'
-import { objectApi } from './resource-mutations'
+import { isVersionConflict, objectApi } from './resource-mutations'
 import { WATCH_SPECS } from './resource-watch-specs'
 
 export { GVK, resolveGvk } from './resource-gvk'
@@ -355,6 +357,10 @@ function decodeTextSecret(b64: string): string | null {
 }
 
 async function readConfigObject(clusterId: string, ref: ResourceRef): Promise<ConfigObject> {
+  if (ref.kind !== 'configmaps' && ref.kind !== 'secrets') {
+    throw new Error('Data editing is available only for ConfigMaps and Secrets')
+  }
+  if (!ref.namespace?.trim()) throw new Error('Selected resource namespace is required')
   const gvk = GVK[ref.kind]
   if (!gvk) throw new Error(`Unknown resource kind: ${ref.kind}`)
   const obj = await objectApi(clusterId)
@@ -365,8 +371,11 @@ async function readConfigObject(clusterId: string, ref: ResourceRef): Promise<Co
   })) as ConfigObject
 }
 
-export async function getConfigData(clusterId: string, ref: ResourceRef): Promise<ConfigData> {
-  const live = await readConfigObject(clusterId, ref)
+function configDataFromObject(live: ConfigObject, ref: ResourceRef): ConfigData {
+  const resourceVersion = live.metadata?.resourceVersion
+  if (typeof resourceVersion !== 'string' || !resourceVersion.trim()) {
+    throw new Error('Resource has no version; reload it before editing')
+  }
   if (ref.kind === 'secrets') {
     const data: Record<string, string> = {}
     const binaryKeys: string[] = []
@@ -375,29 +384,81 @@ export async function getConfigData(clusterId: string, ref: ResourceRef): Promis
       if (text == null) binaryKeys.push(k)
       else data[k] = text
     }
-    return { secret: true, data, binaryKeys }
+    return { secret: true, data, binaryKeys, resourceVersion }
   }
-  return { secret: false, data: live.data ?? {}, binaryKeys: Object.keys(live.binaryData ?? {}) }
+  return {
+    secret: false,
+    data: live.data ?? {},
+    binaryKeys: Object.keys(live.binaryData ?? {}),
+    resourceVersion
+  }
+}
+
+export async function getConfigData(clusterId: string, ref: ResourceRef): Promise<ConfigData> {
+  try {
+    return configDataFromObject(await readConfigObject(clusterId, ref), ref)
+  } catch (error) {
+    if (ref.kind === 'secrets')
+      throw new Error('Secret data could not be loaded. Check permissions and retry.')
+    throw error
+  }
 }
 
 export async function applyConfigData(
   clusterId: string,
   ref: ResourceRef,
-  data: Record<string, string>
-): Promise<void> {
-  const live = await readConfigObject(clusterId, ref)
-  if (ref.kind === 'secrets') {
-    // Preserve binary entries (kept as their existing base64); re-encode text entries.
-    const next: Record<string, string> = {}
-    for (const [k, v] of Object.entries(live.data ?? {})) {
-      if (decodeTextSecret(v) == null) next[k] = v
-    }
-    for (const [k, v] of Object.entries(data)) next[k] = Buffer.from(v, 'utf8').toString('base64')
-    live.data = next
-    delete live.stringData
-  } else {
-    live.data = data // binaryData left untouched
+  update: ConfigDataUpdate
+): Promise<ConfigDataSaveResult> {
+  if (typeof update.resourceVersion !== 'string' || !update.resourceVersion.trim()) {
+    throw new Error('Original resource version is required to save data')
   }
-  const obj = await objectApi(clusterId)
-  await obj.replace(live)
+  if (!update.data || typeof update.data !== 'object' || Array.isArray(update.data)) {
+    throw new Error('Data must be a key/value object')
+  }
+  try {
+    const live = await readConfigObject(clusterId, ref)
+    const current = configDataFromObject(live, ref)
+    if (current.resourceVersion !== update.resourceVersion) {
+      return { status: 'conflict', current }
+    }
+    const binaryCollision = current.binaryKeys.find((key) => Object.hasOwn(update.data, key))
+    if (binaryCollision) throw new Error(`Key "${binaryCollision}" collides with a binary entry`)
+    const keys = Object.keys(update.data)
+    if (
+      keys.length === Object.keys(current.data).length &&
+      keys.every((key) => update.data[key] === current.data[key])
+    ) {
+      return { status: 'unchanged', current }
+    }
+
+    if (ref.kind === 'secrets') {
+      // Preserve binary entries (kept as their existing base64); re-encode text entries.
+      const next: Record<string, string> = {}
+      for (const [key, value] of Object.entries(live.data ?? {})) {
+        if (decodeTextSecret(value) == null) next[key] = value
+      }
+      for (const [key, value] of Object.entries(update.data)) {
+        next[key] = Buffer.from(value, 'utf8').toString('base64')
+      }
+      live.data = next
+      delete live.stringData
+    } else {
+      live.data = { ...update.data } // binaryData left untouched
+    }
+    const obj = await objectApi(clusterId)
+    try {
+      const saved = (await obj.replace(live)) as ConfigObject
+      return { status: 'saved', current: configDataFromObject(saved, ref) }
+    } catch (error) {
+      if (isVersionConflict(error)) {
+        return { status: 'conflict', current: await getConfigData(clusterId, ref) }
+      }
+      throw error
+    }
+  } catch (error) {
+    if (ref.kind === 'secrets') {
+      throw new Error('Secret data save failed. Check permissions and reload before retrying.')
+    }
+    throw error
+  }
 }

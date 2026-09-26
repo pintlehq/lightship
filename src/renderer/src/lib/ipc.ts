@@ -133,8 +133,7 @@ export const clusterApi = {
     api()!.cluster.getResourceDetail(id, ref),
   getConfigData: (id: string, ref: ResourceRef): Promise<ConfigData> =>
     api()!.cluster.getConfigData(id, ref),
-  applyConfigData: (id: string, ref: ResourceRef, data: Record<string, string>): Promise<void> =>
-    api()!.cluster.applyConfigData(id, ref, data),
+  applyConfigData: (id, ref, update) => api()!.cluster.applyConfigData(id, ref, update),
   streamLogs: (
     id: string,
     ref: ResourceRef,

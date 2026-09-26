@@ -4,6 +4,7 @@ import { toast } from '@renderer/ui/components/toaster'
 
 import type {
   ClusterMeta,
+  ConfigDataUpdate,
   NamespaceCreateInput,
   CustomResourceList,
   CustomResourceParams,
@@ -368,8 +369,31 @@ export const useConfigData = (clusterId: string | null, ref: ResourceRef) => {
 export const useApplyConfigData = (clusterId: string | null, ref: ResourceRef) => {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (data: Record<string, string>) => applyConfigData(clusterId, ref, data),
-    onSuccess: () => {
+    mutationFn: (update: ConfigDataUpdate) => applyConfigData(clusterId, ref, update),
+    onSuccess: (result) => {
+      if (result.status === 'conflict') {
+        toast.error(
+          'Save conflict',
+          'The resource changed. Review the latest data before retrying.'
+        )
+        if (clusterId)
+          recordActivity({
+            clusterId,
+            action: 'apply-config',
+            kind: ref.kind,
+            namespace: ref.namespace,
+            name: ref.name,
+            count: 1,
+            outcome: 'error',
+            message: 'The resource changed before it could be saved'
+          })
+        return
+      }
+      qc.setQueryData(qk.configData(clusterId, ref), result.current)
+      if (result.status === 'unchanged') {
+        toast.info('Data is already up to date')
+        return
+      }
       void qc.invalidateQueries({ queryKey: qk.configData(clusterId, ref) })
       void qc.invalidateQueries({ queryKey: qk.yaml(clusterId, ref) })
       void qc.invalidateQueries({ queryKey: qk.resource(clusterId, ref.kind) })
@@ -386,7 +410,9 @@ export const useApplyConfigData = (clusterId: string | null, ref: ResourceRef) =
         })
     },
     onError: (e) => {
-      toast.error('Failed to save', errMsg(e))
+      const message =
+        ref.kind === 'secrets' ? 'Secret data save failed. Reload and retry.' : errMsg(e)
+      toast.error('Failed to save', message)
       if (clusterId)
         recordActivity({
           clusterId,
@@ -396,7 +422,7 @@ export const useApplyConfigData = (clusterId: string | null, ref: ResourceRef) =
           name: ref.name,
           count: 1,
           outcome: 'error',
-          message: errMsg(e)
+          message
         })
     }
   })

@@ -8,11 +8,12 @@ import { Input } from '@renderer/ui/components/input'
 import { cn } from '@renderer/ui/lib/utils'
 import { useThemeStore } from '@renderer/ui/stores/theme-store'
 
-import type { ResourceRef } from '../../../shared/ipc-types'
+import type { ConfigData, ResourceRef } from '../../../shared/ipc-types'
 import { lightshipSearch } from '../lib/cm-search'
 import { lightshipCmTheme } from '../lib/cm-theme'
 import { useApplyConfigData, useConfigData } from '../queries/use-lightship-data'
 import { useUiStore } from '../stores/ui-store'
+import { ConfigDataConflictDialog } from './config-data-conflict-dialog'
 import { ConfirmDialog } from './confirm-dialog'
 
 interface Row {
@@ -45,6 +46,9 @@ export function ConfigDataEditor({
   const [rows, setRows] = useState<Row[]>([])
   const [binaryKeys, setBinaryKeys] = useState<string[]>([])
   const [baseline, setBaseline] = useState(() => serialize([]))
+  const [snapshot, setSnapshot] = useState<ConfigData | null>(null)
+  const [reviewLatest, setReviewLatest] = useState<ConfigData | null>(null)
+  const [reviewOpen, setReviewOpen] = useState(false)
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [revealed, setRevealed] = useState<Set<number>>(() => new Set())
   const [confirm, setConfirm] = useState(false)
@@ -63,19 +67,27 @@ export function ConfigDataEditor({
   const dirty = serialize(rows) !== baseline
   const selected = rows.find((r) => r.id === selectedId) ?? null
 
+  const adoptSnapshot = (current: ConfigData) => {
+    const next = toRows(current.data, nextId)
+    const prevKey = rowsRef.current.find((r) => r.id === selectedIdRef.current)?.key
+    setRows(next)
+    setBinaryKeys(current.binaryKeys)
+    setBaseline(serialize(next))
+    setSnapshot(current)
+    setSelectedId(next.find((r) => r.key === prevKey)?.id ?? next[0]?.id ?? null)
+    setReviewLatest(null)
+    setReviewOpen(false)
+  }
+
   // Seed from server data only when there are no unsaved edits, preserving the
   // selected key across refetches.
   useEffect(() => {
     if (!data) return
     if (serialize(rowsRef.current) === baselineRef.current) {
-      const next = toRows(data.data, nextId)
-      setRows(next)
-      setBinaryKeys(data.binaryKeys)
-      setBaseline(serialize(next))
-      const prevKey = rowsRef.current.find((r) => r.id === selectedIdRef.current)?.key
-      const keep = prevKey != null ? next.find((r) => r.key === prevKey) : undefined
-      setSelectedId((keep ?? next[0])?.id ?? null)
+      adoptSnapshot(data)
     }
+    // Snapshot and draft must stay paired; background refetches cannot rebase a dirty edit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data])
 
   const validationError = useMemo(() => {
@@ -115,10 +127,8 @@ export function ConfigDataEditor({
   }
 
   const reset = () => {
-    if (!data) return
-    const next = toRows(data.data, nextId)
-    setRows(next)
-    setSelectedId(next[0]?.id ?? null)
+    const latest = reviewLatest ?? data
+    if (latest) adoptSnapshot(latest)
   }
 
   const onUpload = async (file: File | undefined) => {
@@ -128,12 +138,24 @@ export function ConfigDataEditor({
   }
 
   const runApply = () => {
-    apply.mutate(Object.fromEntries(rows.map((r) => [r.key, r.value])), {
-      onSuccess: () => {
-        setBaseline(serialize(rows))
-        setConfirm(false)
+    if (!snapshot) return
+    apply.mutate(
+      {
+        resourceVersion: snapshot.resourceVersion,
+        data: Object.fromEntries(rows.map((r) => [r.key, r.value]))
+      },
+      {
+        onSuccess: (result) => {
+          setConfirm(false)
+          if (result.status === 'conflict') {
+            setReviewLatest(result.current)
+            setReviewOpen(true)
+          } else {
+            adoptSnapshot(result.current)
+          }
+        }
       }
-    })
+    )
   }
 
   const hidden = secret && selected != null && !revealed.has(selected.id)
@@ -154,8 +176,17 @@ export function ConfigDataEditor({
         {(apply.isError || validationError) && (
           <span className="truncate font-mono text-[11px] text-destructive">
             {validationError ??
-              (apply.error instanceof Error ? apply.error.message : 'Apply failed')}
+              (secret
+                ? 'Secret data save failed. Reload and retry.'
+                : apply.error instanceof Error
+                  ? apply.error.message
+                  : 'Apply failed')}
           </span>
+        )}
+        {reviewLatest && dirty && !reviewOpen && (
+          <Button variant="outline" size="sm" onClick={() => setReviewOpen(true)}>
+            Review conflict
+          </Button>
         )}
         <div className="ml-auto flex gap-2">
           <Button
@@ -168,7 +199,7 @@ export function ConfigDataEditor({
           </Button>
           <Button
             size="default"
-            disabled={readOnly || !dirty || !!validationError || apply.isPending}
+            disabled={readOnly || !snapshot || !dirty || !!validationError || apply.isPending}
             onClick={() => setConfirm(true)}
           >
             <Icon name="check" className="h-3.5 w-3.5" />
@@ -209,6 +240,7 @@ export function ConfigDataEditor({
                   <button
                     type="button"
                     title="Remove field"
+                    disabled={readOnly || apply.isPending}
                     onClick={() => removeRow(r.id)}
                     className="shrink-0 rounded p-1 text-destructive opacity-0 transition-opacity hover:bg-destructive/10 group-hover:opacity-100 focus-visible:opacity-100"
                   >
@@ -230,7 +262,13 @@ export function ConfigDataEditor({
               )}
             </div>
             <div className="border-t border-border p-2">
-              <Button variant="outline" size="default" className="w-full" onClick={addRow}>
+              <Button
+                variant="outline"
+                size="default"
+                className="w-full"
+                disabled={readOnly || apply.isPending}
+                onClick={addRow}
+              >
                 <Icon name="plus" className="h-3.5 w-3.5" />
                 Add field
               </Button>
@@ -244,6 +282,7 @@ export function ConfigDataEditor({
                 <div className="flex items-center gap-2 border-b border-border px-3 py-2">
                   <Input
                     value={selected.key}
+                    disabled={readOnly || apply.isPending}
                     onChange={(e) => patch(selected.id, 'key', e.target.value)}
                     placeholder="KEY"
                     className="max-w-xs flex-1"
@@ -257,7 +296,12 @@ export function ConfigDataEditor({
                       e.target.value = ''
                     }}
                   />
-                  <Button variant="outline" size="default" onClick={() => fileRef.current?.click()}>
+                  <Button
+                    variant="outline"
+                    size="default"
+                    disabled={readOnly || apply.isPending}
+                    onClick={() => fileRef.current?.click()}
+                  >
                     <Icon name="upload" className="h-3.5 w-3.5" />
                     Upload
                   </Button>
@@ -301,7 +345,7 @@ export function ConfigDataEditor({
                       onChange={(v) => patch(selected.id, 'value', v)}
                       theme={cmTheme}
                       extensions={[lightshipSearch]}
-                      editable={!apply.isPending}
+                      editable={!readOnly && !apply.isPending}
                       height="100%"
                       className="h-full text-[12.5px]"
                       basicSetup={{ highlightActiveLine: false }}
@@ -322,11 +366,40 @@ export function ConfigDataEditor({
         open={confirm}
         busy={apply.isPending}
         title={`Apply data changes to ${refTarget.name}?`}
-        message="This replaces the resource's data on the live cluster. A stale edit will be rejected."
+        message={
+          <div className="space-y-2">
+            <p>This replaces text data on the selected live resource.</p>
+            <p>A stale edit will be rejected so you can review the latest data.</p>
+            {apply.isError && (
+              <p role="alert" className="text-destructive">
+                {secret ? 'Secret data save failed. Reload and retry.' : String(apply.error)}
+              </p>
+            )}
+          </div>
+        }
         confirmLabel="Apply"
         onConfirm={runApply}
         onCancel={() => setConfirm(false)}
       />
+      {reviewOpen && reviewLatest && snapshot && (
+        <ConfigDataConflictDialog
+          base={snapshot}
+          draft={Object.fromEntries(rows.map((row) => [row.key, row.value]))}
+          latest={reviewLatest}
+          onStage={(merged) => {
+            const next = toRows(merged, nextId)
+            setRows(next)
+            setBaseline(serialize(toRows(reviewLatest.data, nextId)))
+            setSnapshot(reviewLatest)
+            setBinaryKeys(reviewLatest.binaryKeys)
+            setSelectedId(next[0]?.id ?? null)
+            setReviewLatest(null)
+            setReviewOpen(false)
+          }}
+          onUseLatest={() => adoptSnapshot(reviewLatest)}
+          onClose={() => setReviewOpen(false)}
+        />
+      )}
     </div>
   )
 }

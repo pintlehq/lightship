@@ -2,6 +2,13 @@ import { EventEmitter } from 'node:events'
 import type { IpcMainInvokeEvent, WebContents } from 'electron'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
+import {
+  ConfigDataSaveResultSchema,
+  ConfigDataUpdateSchema,
+  ResourceRefSchema,
+  type ConfigDataUpdate,
+  type ResourceRef
+} from '../shared/ipc-types'
 
 const electronMock = vi.hoisted(() => {
   const handlers = new Map<string, (...args: unknown[]) => unknown>()
@@ -57,6 +64,32 @@ describe('registerInvokeHandler', () => {
     registerInvokeHandler('test:input', parseArgs(z.string()), z.string(), (_event, value) => value)
 
     await expect(electronMock.handlers.get('test:input')?.(event, 42)).rejects.toThrow()
+  })
+
+  it('rejects ConfigMap saves without an original version before invoking the service', async () => {
+    const handler = vi.fn(
+      (_event: IpcMainInvokeEvent, _id: string, _ref: ResourceRef, _update: ConfigDataUpdate) => ({
+        status: 'unchanged' as const,
+        current: { secret: false, data: {}, binaryKeys: [], resourceVersion: '10' }
+      })
+    )
+    registerInvokeHandler(
+      'cluster:applyConfigData:test',
+      parseArgs(z.string(), ResourceRefSchema, ConfigDataUpdateSchema),
+      ConfigDataSaveResultSchema,
+      handler
+    )
+    const invoke = electronMock.handlers.get('cluster:applyConfigData:test')
+    const ref = { kind: 'configmaps', namespace: 'web', name: 'settings' }
+    await expect(invoke?.(event, 'cluster-a', ref, { data: {} })).rejects.toThrow()
+    await expect(
+      invoke?.(event, 'cluster-a', ref, { resourceVersion: '', data: {} })
+    ).rejects.toThrow()
+    expect(handler).not.toHaveBeenCalled()
+    await expect(
+      invoke?.(event, 'cluster-a', ref, { resourceVersion: '10', data: {} })
+    ).resolves.toMatchObject({ status: 'unchanged' })
+    expect(handler).toHaveBeenCalledOnce()
   })
 
   it('rejects invalid output', async () => {

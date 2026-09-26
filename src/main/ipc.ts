@@ -12,6 +12,8 @@ import {
   ActivityRecordArraySchema,
   ActivityRecordSchema,
   ConfigDataSchema,
+  ConfigDataSaveResultSchema,
+  ConfigDataUpdateSchema,
   CustomResourceListSchema,
   CustomResourceParamsSchema,
   DetectedContextArraySchema,
@@ -219,9 +221,9 @@ export function registerLightshipIpc(): void {
   )
   registerInvokeHandler(
     'cluster:applyConfigData',
-    parseArgs(Id, ResourceRefSchema, z.record(z.string(), z.string())),
-    z.void(),
-    (_e, id, ref, data) => resources.applyConfigData(id, ref, data)
+    parseArgs(Id, ResourceRefSchema, ConfigDataUpdateSchema),
+    ConfigDataSaveResultSchema,
+    (_e, id, ref, update) => resources.applyConfigData(id, ref, update)
   )
 
   // Live log streaming: start opens follow-streams that push to

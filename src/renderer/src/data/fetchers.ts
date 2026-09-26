@@ -2,6 +2,8 @@ import type {
   ClusterEvent,
   ClusterOverview,
   ConfigData,
+  ConfigDataSaveResult,
+  ConfigDataUpdate,
   NodeDetail,
   NamespaceCreateInput,
   NamespaceDetail,
@@ -415,17 +417,18 @@ export async function fetchConfigData(
   return {
     secret: ref.kind === 'secrets',
     data: { EXAMPLE_KEY: 'example-value', 'config.yaml': 'level: info\nreplicas: 3' },
-    binaryKeys: []
+    binaryKeys: [],
+    resourceVersion: 'browser-demo'
   }
 }
 
 export async function applyConfigData(
   clusterId: string | null,
   ref: ResourceRef,
-  data: Record<string, string>
-): Promise<void> {
+  update: ConfigDataUpdate
+): Promise<ConfigDataSaveResult> {
   if (!hasBackend())
     throw new Error('Backend unavailable — run inside the Electron app to apply changes')
   if (!clusterId) throw new Error('No active cluster')
-  return clusterApi.applyConfigData(clusterId, ref, data)
+  return clusterApi.applyConfigData(clusterId, ref, update)
 }
