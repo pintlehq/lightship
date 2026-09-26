@@ -4,6 +4,7 @@ import { Dot } from '@renderer/ui/components/dot'
 import { Icon } from '@renderer/ui/components/icon'
 import type { Tone } from '@renderer/ui/lib/types'
 
+import { openExternal } from '../lib/open-external'
 import { usePortForwardsStore, type PortForwardStatus } from '../stores/port-forwards-store'
 import { ViewHeader } from './view-header'
 
@@ -67,7 +68,7 @@ export function PortForwardsView() {
                       variant="ghost"
                       size="sm"
                       disabled={s.status !== 'running'}
-                      onClick={() => void window.api?.window?.openExternal(url)}
+                      onClick={() => openExternal(url)}
                     >
                       <Icon name="link" className="h-3.5 w-3.5" />
                       Open

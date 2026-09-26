@@ -1,6 +1,4 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { randomUUID } from 'node:crypto'
-import { electronAPI } from '@electron-toolkit/preload'
 
 import type { LightshipApi, PortForwardEvent, PtyEvent } from '../shared/ipc-types'
 import {
@@ -50,7 +48,7 @@ const api: LightshipApi = {
     getConfigData: (id, ref) => invoke('cluster:getConfigData', id, ref),
     applyConfigData: (id, ref, data) => invoke('cluster:applyConfigData', id, ref, data),
     streamLogs: (id, ref, opts, onEvent) => {
-      const subId = `logs:${randomUUID()}`
+      const subId = `logs:${globalThis.crypto.randomUUID()}`
       // Subscribe before starting so no early lines are dropped.
       return createSubscription({
         subId,
@@ -94,7 +92,7 @@ const api: LightshipApi = {
       }
     },
     watch: (id, kind, onEvent) => {
-      const subId = `watch:${randomUUID()}`
+      const subId = `watch:${globalThis.crypto.randomUUID()}`
       return createSubscription({
         subId,
         eventPrefix: 'cluster:watch',
@@ -125,18 +123,4 @@ const api: LightshipApi = {
   }
 }
 
-// Use `contextBridge` APIs to expose Electron APIs to renderer only if
-// context isolation is enabled, otherwise just add to the DOM global.
-if (process.contextIsolated) {
-  try {
-    contextBridge.exposeInMainWorld('electron', electronAPI)
-    contextBridge.exposeInMainWorld('api', api)
-  } catch (error) {
-    console.error(error)
-  }
-} else {
-  // @ts-ignore (define in dts)
-  window.electron = electronAPI
-  // @ts-ignore (define in dts)
-  window.api = api
-}
+contextBridge.exposeInMainWorld('api', api)

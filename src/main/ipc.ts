@@ -44,6 +44,7 @@ import * as pty from './services/pty'
 import * as resources from './services/resources'
 import * as uiState from './services/ui-state'
 import * as watch from './services/watch'
+import { approvedExternalUrl } from './electron-boundary'
 import { parseArgs, registerInvokeHandler } from './ipc-helpers'
 
 // Renderer-supplied arguments are untrusted — parse them before use. A failed
@@ -307,8 +308,6 @@ export function registerLightshipIpc(): void {
     BrowserWindow.fromWebContents(e.sender)?.close()
   })
   registerInvokeHandler('window:openExternal', parseArgs(z.string()), z.void(), (_e, u) => {
-    if (!/^https?:\/\/(localhost|127\.0\.0\.1):\d+/.test(u))
-      throw new Error('Refusing to open non-localhost URL')
-    return shell.openExternal(u)
+    return shell.openExternal(approvedExternalUrl(u))
   })
 }

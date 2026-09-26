@@ -7,6 +7,7 @@ import { Overlay } from '@renderer/ui/components/overlay'
 import { cn } from '@renderer/ui/lib/utils'
 
 import type { PortInfo, ResourceRef } from '../../../shared/ipc-types'
+import { openExternal } from '../lib/open-external'
 import { usePortForwardsStore } from '../stores/port-forwards-store'
 
 export function PortForwardDialog({
@@ -106,7 +107,7 @@ export function PortForwardDialog({
             <Button variant="outline" onClick={close}>
               Done
             </Button>
-            <Button disabled={!running} onClick={() => void window.api?.window?.openExternal(url)}>
+            <Button disabled={!running} onClick={() => openExternal(url)}>
               <Icon name="link" className="h-3.5 w-3.5" />
               Open in browser
             </Button>

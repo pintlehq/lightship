@@ -8,7 +8,8 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()]
   },
   preload: {
-    plugins: [externalizeDepsPlugin()]
+    // Sandboxed preloads can require Electron, but not installed npm packages.
+    plugins: [externalizeDepsPlugin({ exclude: ['zod'] })]
   },
   renderer: {
     resolve: {

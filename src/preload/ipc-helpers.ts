@@ -1,5 +1,4 @@
 import { ipcRenderer } from 'electron'
-import { randomUUID } from 'node:crypto'
 
 import {
   DrainEventSchema,
@@ -60,7 +59,7 @@ export function createManagedSubscription<TEvent>({
   onEvent: (event: TEvent) => void
   errorEvent: (message: string) => TEvent
 }): { subId: string; stop(): Promise<void>; reportError(error: unknown): void } {
-  const subId = `${prefix}:${randomUUID()}`
+  const subId = `${prefix}:${globalThis.crypto.randomUUID()}`
   const channel = `${eventPrefix}:${subId}`
   let active = true
   let stopPromise: Promise<void> | undefined
@@ -103,7 +102,7 @@ export function createDrainOperation(
   name: string,
   onProgress: (progress: DrainProgress) => void
 ): DrainHandle {
-  const subId = `drain:${randomUUID()}`
+  const subId = `drain:${globalThis.crypto.randomUUID()}`
   const channel = `cluster:drain:${subId}`
   let started = false
   let cancelled = false
