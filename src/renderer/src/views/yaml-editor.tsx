@@ -82,13 +82,14 @@ export function YamlEditor({
           </span>
         )}
         <div className="ml-auto flex gap-2">
-          <WrapToggle wrap={wrap} onToggle={() => setWrap((w) => !w)} />
+          <WrapToggle wrap={wrap} onToggle={() => setWrap((w) => !w)} className="h-8" />
           <Button
             variant="outline"
             size="default"
             disabled={!dirty || apply.isPending}
             onClick={() => setDraft(baseline)}
           >
+            <Icon name="refresh" className="h-3.5 w-3.5" aria-hidden="true" />
             Reset
           </Button>
           <Button
