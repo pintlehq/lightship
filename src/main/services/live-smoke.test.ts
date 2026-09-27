@@ -1,16 +1,5 @@
-import { beforeAll, describe, expect, it, vi } from 'vitest'
 import type { AppsV1Api, CoreV1Api, KubeConfig } from '@kubernetes/client-node'
-
-// resources.ts → k8s.ts → cluster-store.ts imports `electron` at module load; stub it so
-// the dynamic `import('./resources')` below loads in node. listViaTable never touches electron.
-vi.mock('electron', () => ({
-  app: { getPath: () => '/tmp/lightship-live-test' },
-  safeStorage: {
-    isEncryptionAvailable: () => true,
-    encryptString: (s: string) => Buffer.from(s, 'utf8'),
-    decryptString: (b: Buffer) => b.toString('utf8')
-  }
-}))
+import { beforeAll, describe, expect, it } from 'vitest'
 
 // Read-only smoke test against a REAL cluster. Skipped unless LIGHTSHIP_LIVE is set,
 // so the default `pnpm test` stays hermetic/offline. Run with:
@@ -72,7 +61,7 @@ describe.skipIf(!LIVE)('live cluster smoke (read-only, ~/.kube/config)', () => {
   })
 
   it('lists secrets via the Table API without pulling .data (mirrors listResource:secrets)', async () => {
-    const { listViaTable } = await import('./resources')
+    const { listViaTable } = await import('./resource-table')
     const rows = await listViaTable(kc, '/api/v1/secrets')
     expect(Array.isArray(rows)).toBe(true)
     if (rows.length) {

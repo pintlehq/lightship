@@ -29,7 +29,7 @@ export function humanizeKind(kind: string): string {
 
 /** Group CRD rows (from `listResource('crd')`) by API group, sorted alphabetically;
  *  kinds within each group sorted by display name. Pure — built from `row.columns`,
- *  whose fields are populated by the `crd` mapper in main/services/resources.ts. */
+ *  whose fields are populated by the `crd` mapper in main/services/resource-mappers.ts. */
 export function groupCrds(rows: ResourceRow[]): CrdGroup[] {
   const byGroup = new Map<string, CrdLeaf[]>()
   for (const r of rows) {

@@ -21,7 +21,7 @@ vi.mock('@renderer/ui/components/toaster', () => ({
 }))
 
 import { qk } from './keys'
-import { useApplyConfigData } from './use-lightship-data'
+import { useApplyConfigData } from './resources'
 
 const ref = { kind: 'secrets', namespace: 'web', name: 'credentials' }
 const update = { resourceVersion: '10', data: { TOKEN: 'draft-value' } }

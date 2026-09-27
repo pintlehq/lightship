@@ -17,15 +17,17 @@ vi.mock('@uiw/react-codemirror', () => ({
   EditorView: { lineWrapping: [] }
 }))
 
-vi.mock('../queries/use-lightship-data', () => ({
+vi.mock('../queries/resources', () => ({
   useResourceYaml: () => ({ data: 'original YAML', isLoading: false, isError: false }),
-  useClusters: () => ({ data: [{ id: 'cluster-a', name: 'Production' }] }),
   useApplyYaml: () => ({
     mutate: mocks.mutate,
     isPending: false,
     isError: mocks.error !== null,
     error: mocks.error
   })
+}))
+vi.mock('../queries/clusters', () => ({
+  useClusters: () => ({ data: [{ id: 'cluster-a', name: 'Production' }] })
 }))
 
 import { YamlEditor } from './yaml-editor'

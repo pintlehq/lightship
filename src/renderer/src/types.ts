@@ -3,9 +3,8 @@ import type { Tone } from '@renderer/ui/lib/types'
 import { z } from 'zod'
 
 import {
-  CustomResourceColumnSchema,
-  PodSchema,
   NodeRowSchema,
+  PodSchema,
   ResourceRefSchema,
   ResourceRowSchema
 } from '../../shared/ipc-types'
@@ -13,8 +12,8 @@ import {
 // `Pod` / `NodeRow` / `ResourceRow` cross the renderer↔main boundary, so they live
 // once in `shared/ipc-types.ts`. Re-exported here so renderer code keeps importing
 // them from `../types` as before.
-export { PodSchema, NodeRowSchema, ResourceRowSchema }
-export type { Pod, NodeRow, ResourceRow } from '../../shared/ipc-types'
+export type { NodeRow, Pod, ResourceRow } from '../../shared/ipc-types'
+export { NodeRowSchema, PodSchema, ResourceRowSchema }
 
 // Types that embed @renderer/ui's `Tone` / `IconName` stay plain interfaces — those
 // unions are owned by the UI package and intentionally not duplicated as schemas.
@@ -70,8 +69,13 @@ export const LightshipViewSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('nodes'), clusterId: z.string() }),
   z.object({ kind: z.literal('namespaces'), clusterId: z.string() }),
   z.object({ kind: z.literal('namespace-detail'), clusterId: z.string(), name: z.string() }),
-  z.object({ kind: z.literal('node-detail'), clusterId: z.string(), node: NodeRowSchema }),
-  z.object({ kind: z.literal('pod'), clusterId: z.string(), pod: PodSchema }),
+  z.object({ kind: z.literal('node-detail'), clusterId: z.string(), name: z.string() }),
+  z.object({
+    kind: z.literal('pod'),
+    clusterId: z.string(),
+    namespace: z.string(),
+    name: z.string()
+  }),
   z.object({ kind: z.literal('clusters') }),
   z.object({ kind: z.literal('history') }),
   z.object({ kind: z.literal('port-forwards') }),
@@ -86,7 +90,8 @@ export const LightshipViewSchema = z.discriminatedUnion('kind', [
     clusterId: z.string(),
     resourceId: z.string(),
     label: z.string(),
-    row: ResourceRowSchema
+    namespace: z.string().optional(),
+    name: z.string()
   }),
   z.object({
     kind: z.literal('logs'),
@@ -113,8 +118,8 @@ export const LightshipViewSchema = z.discriminatedUnion('kind', [
     plural: z.string(),
     namespaced: z.boolean(),
     crdKind: z.string(),
-    columns: z.array(CustomResourceColumnSchema),
-    row: ResourceRowSchema,
+    namespace: z.string().optional(),
+    name: z.string(),
     label: z.string()
   }),
   z.object({ kind: z.literal('helm'), clusterId: z.string() }),

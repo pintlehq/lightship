@@ -3,10 +3,12 @@ import { Card } from '@renderer/ui/components/card'
 import { Dot } from '@renderer/ui/components/dot'
 import { Tabs, type TabDef } from '@renderer/ui/components/tabs'
 import type { Tone } from '@renderer/ui/lib/types'
+import { ResourceLoadState, resourceReady } from './resource-load-state'
 
 import type { CustomResourceColumn, ResourceRow } from '../../../shared/ipc-types'
 import { detailTabKey, resolveDetailTab } from '../lib/detail-tab-key'
-import { useEvents, useResourceDetail } from '../queries/use-lightship-data'
+import { useEvents } from '../queries/overview'
+import { useCustomResource, useResourceDetail } from '../queries/resources'
 import { useDetailTabStore } from '../stores/detail-tab-store'
 import { EventList } from './event-list'
 import { SideSection } from './side-section'
@@ -23,7 +25,7 @@ const fmtDate = (iso: string): string => {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString()
 }
 
-export function CrdInstanceDetailView({
+function CrdInstanceDetailContent({
   clusterId,
   group,
   version,
@@ -60,7 +62,7 @@ export function CrdInstanceDetailView({
     { value: 'yaml', label: 'YAML' },
     { value: 'events', label: 'Events', count: events.length || undefined }
   ]
-  const tabKey = detailTabKey(clusterId, plural, row.namespace, row.name)
+  const tabKey = detailTabKey(clusterId, plural, row.namespace, row.name, `${group}/${version}`)
   const remembered = useDetailTabStore((s) => s.byKey[tabKey])
   const rememberTab = useDetailTabStore((s) => s.setFor)
   const tab = resolveDetailTab(
@@ -152,5 +154,43 @@ export function CrdInstanceDetailView({
         )}
       </div>
     </div>
+  )
+}
+
+export function CrdInstanceDetailView({
+  clusterId,
+  group,
+  version,
+  plural,
+  namespaced,
+  crdKind,
+  namespace,
+  name
+}: {
+  clusterId: string
+  group: string
+  version: string
+  plural: string
+  namespaced: boolean
+  crdKind: string
+  namespace?: string
+  name: string
+}) {
+  const query = useCustomResource(clusterId, { group, version, plural, namespaced }, true)
+  const row = query.data?.rows.find((r) => r.namespace === namespace && r.name === name)
+  if (!row || !resourceReady(query, true))
+    return <ResourceLoadState query={query} found={!!row} name={name} />
+  return (
+    <CrdInstanceDetailContent
+      key={row.uid}
+      clusterId={clusterId}
+      group={group}
+      version={version}
+      plural={plural}
+      namespaced={namespaced}
+      crdKind={crdKind}
+      columns={query.data?.columns ?? []}
+      row={row}
+    />
   )
 }

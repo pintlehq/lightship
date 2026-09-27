@@ -1,4 +1,3 @@
-import type { WebContents } from 'electron'
 import type {
   KubeConfig,
   KubernetesListObject,
@@ -6,9 +5,11 @@ import type {
   V1Node,
   V1Pod
 } from '@kubernetes/client-node'
+import type { WebContents } from 'electron'
 
 import type { NodeRow, WatchDelta, WatchEvent, WatchRow } from '../../shared/ipc-types'
-import { ageOf, kcForCluster, loadK8s } from './k8s'
+import { kcForCluster, loadK8s } from './k8s-client'
+import { ageOf } from './quantities'
 import { mapPod, RESOURCE_MAPPERS } from './resource-mappers'
 import { WATCH_SPECS } from './resource-watch-specs'
 

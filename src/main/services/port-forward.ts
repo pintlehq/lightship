@@ -1,5 +1,3 @@
-import { createServer, type Server, type Socket } from 'node:net'
-import type { WebContents } from 'electron'
 import {
   Observable,
   type ConfigurationOptions,
@@ -9,9 +7,11 @@ import {
   type ResponseContext,
   type V1Pod
 } from '@kubernetes/client-node'
+import type { WebContents } from 'electron'
+import { createServer, type Server, type Socket } from 'node:net'
 
 import type { PortForwardEvent, PortForwardOptions, ResourceRef } from '../../shared/ipc-types'
-import { kcForCluster, loadK8s } from './k8s'
+import { kcForCluster, loadK8s } from './k8s-client'
 
 type Connection = Awaited<ReturnType<PortForward['portForward']>>
 type Session = {

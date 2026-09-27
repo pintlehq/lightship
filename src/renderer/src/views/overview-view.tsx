@@ -1,15 +1,15 @@
-import { useEffect, useState } from 'react'
 import { Button } from '@renderer/ui/components/button'
 import { Card } from '@renderer/ui/components/card'
 import { Dot } from '@renderer/ui/components/dot'
 import { Icon } from '@renderer/ui/components/icon'
+import { useEffect, useState } from 'react'
 
-import { useOverviewBundle } from '../queries/use-lightship-data'
 import { errMsg } from '../lib/errors'
 import { eventTone } from '../lib/event-tone'
+import { useOverviewBundle } from '../queries/overview'
 import { Sparkline } from './sparkline'
-import { ViewHeader } from './view-header'
 import { StatCard } from './stat-card'
+import { ViewHeader } from './view-header'
 
 const MAX_POINTS = 40
 

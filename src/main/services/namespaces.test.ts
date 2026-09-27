@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
   deleted: [] as string[]
 }))
 
-vi.mock('./k8s', () => ({
+vi.mock('./k8s-client', () => ({
   ageOf: () => '2d',
   kcForCluster: async () => ({
     makeApiClient: (api: { api: string }) =>
@@ -30,9 +30,9 @@ vi.mock('./k8s', () => ({
 import {
   createNamespace,
   deleteNamespace,
+  getNamespaceDetail,
   isNamespaceProtected,
   listNamespaceSummaries,
-  getNamespaceDetail,
   mapNetworkPolicy,
   podStates
 } from './namespaces'

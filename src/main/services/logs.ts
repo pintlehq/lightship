@@ -1,9 +1,9 @@
-import { PassThrough, type Readable } from 'node:stream'
-import type { WebContents } from 'electron'
 import type { KubeConfig, V1Pod } from '@kubernetes/client-node'
+import type { WebContents } from 'electron'
+import { PassThrough, type Readable } from 'node:stream'
 
 import type { LogEvent, LogLine, LogStreamOptions, ResourceRef } from '../../shared/ipc-types'
-import { kcForCluster, loadK8s } from './k8s'
+import { kcForCluster, loadK8s } from './k8s-client'
 
 // One pod-container to tail.
 type Target = { ns: string; pod: string; container: string }

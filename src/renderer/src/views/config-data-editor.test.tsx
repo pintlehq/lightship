@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { describe, expect, it, vi } from 'vitest'
 
 import { ConfigDataEditor } from './config-data-editor'
 
@@ -9,7 +9,7 @@ const configData = vi.hoisted(() => ({
   binaryKeys: []
 }))
 
-vi.mock('../queries/use-lightship-data', () => ({
+vi.mock('../queries/resources', () => ({
   useConfigData: () => ({
     data: configData,
     isLoading: false,

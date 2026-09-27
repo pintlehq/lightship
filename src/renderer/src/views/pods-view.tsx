@@ -1,10 +1,3 @@
-import { useCallback, useMemo, useState } from 'react'
-import type { RowSelectionState } from '@tanstack/react-table'
-import {
-  legacyCreateColumnHelper as createColumnHelper,
-  type LegacyColumnDef as ColumnDef
-} from '@tanstack/react-table/legacy'
-import { useQueryClient } from '@tanstack/react-query'
 import { ActionMenu } from '@renderer/ui/components/action-menu'
 import { Button } from '@renderer/ui/components/button'
 import { Card } from '@renderer/ui/components/card'
@@ -14,6 +7,13 @@ import { Icon } from '@renderer/ui/components/icon'
 import { Input } from '@renderer/ui/components/input'
 import { MultiSelect, type MultiSelectOption } from '@renderer/ui/components/multi-select'
 import { toast } from '@renderer/ui/components/toaster'
+import { useQueryClient } from '@tanstack/react-query'
+import type { RowSelectionState } from '@tanstack/react-table'
+import {
+  legacyCreateColumnHelper as createColumnHelper,
+  type LegacyColumnDef as ColumnDef
+} from '@tanstack/react-table/legacy'
+import { useCallback, useMemo, useState } from 'react'
 
 import { podColumns } from '../columns/pod-columns'
 import { POD_STATUS } from '../data/static'
@@ -22,7 +22,8 @@ import { clusterApi } from '../lib/ipc'
 import { recordActivity } from '../lib/record-activity'
 import { qk } from '../queries/keys'
 import { invalidateMutation } from '../queries/mutation-invalidation'
-import { useNamespaces, usePods } from '../queries/use-lightship-data'
+import { useNamespaces } from '../queries/namespaces'
+import { usePods } from '../queries/pods'
 import { useNamespaceFilterStore } from '../stores/namespace-filter-store'
 import { useUiStore } from '../stores/ui-store'
 import type { Pod } from '../types'

@@ -55,6 +55,21 @@ provide deterministic teardown.
 
 ## Kubernetes changes
 
+For a new built-in resource, first add its identity, plural, scope, and capabilities to the shared
+resource catalog. Add the main-process mapper/list implementation and renderer columns as needed.
+Typed mappings and catalog consistency tests cover generic resources; pods and nodes use dedicated
+row schemas and list/watch paths, and namespaces use a dedicated management screen.
+
+Keep new hooks with their domain instead of adding to a cross-feature query file. Shared query
+keys, live subscriptions, and invalidation belong in `queries`. Node code is grouped in
+`features/nodes`; its action hook owns drain cancellation and reporting, while the view owns
+presentation and selection. App startup and navigation live in `app`.
+
+Open resource details using identity only. Read current resource data from Query and use the
+shared identity helper for object query keys and detail tab IDs. Include custom API group/version;
+do not put row snapshots into tab state. Retain loading, error, and not-found handling when
+connecting a new detail view.
+
 Treat all renderer input as untrusted. Validate Kubernetes names, selectors, counts, references,
 and YAML near the boundary. Destructive or disruptive actions need an explicit confirmation path,
 protected-resource checks, query invalidation, and both success and failure activity records.

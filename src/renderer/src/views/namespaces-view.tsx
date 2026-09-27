@@ -1,5 +1,3 @@
-import { useState } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
 import { ActionMenu } from '@renderer/ui/components/action-menu'
 import { Badge } from '@renderer/ui/components/badge'
 import { Button } from '@renderer/ui/components/button'
@@ -8,14 +6,13 @@ import { Icon } from '@renderer/ui/components/icon'
 import { Input } from '@renderer/ui/components/input'
 import { Tabs } from '@renderer/ui/components/tabs'
 import { cn } from '@renderer/ui/lib/utils'
+import { useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
 
 import type { NamespaceSummary } from '../../../shared/ipc-types'
+import { useClusters } from '../queries/clusters'
 import { qk } from '../queries/keys'
-import {
-  useClusters,
-  useDeleteNamespace,
-  useNamespaceSummaries
-} from '../queries/use-lightship-data'
+import { useDeleteNamespace, useNamespaceSummaries } from '../queries/namespaces'
 import { useUiStore } from '../stores/ui-store'
 import { ConfirmDialog } from './confirm-dialog'
 import { NewNamespaceDialog } from './new-namespace-dialog'

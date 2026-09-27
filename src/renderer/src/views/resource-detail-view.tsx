@@ -1,9 +1,10 @@
-import { useState } from 'react'
 import { Button } from '@renderer/ui/components/button'
 import { Card } from '@renderer/ui/components/card'
 import { Dot } from '@renderer/ui/components/dot'
 import { Icon } from '@renderer/ui/components/icon'
 import { Tabs, type TabDef } from '@renderer/ui/components/tabs'
+import { useState } from 'react'
+import { ResourceLoadState, resourceReady } from './resource-load-state'
 
 import {
   canForwardResource,
@@ -11,7 +12,8 @@ import {
   canScaleResource
 } from '../../../shared/resource-capabilities'
 import { detailTabKey, resolveDetailTab } from '../lib/detail-tab-key'
-import { useEvents, useResourceDetail } from '../queries/use-lightship-data'
+import { useEvents } from '../queries/overview'
+import { useResource, useResourceDetail } from '../queries/resources'
 import { RESOURCE_REGISTRY } from '../resources/registry'
 import { useDetailTabStore } from '../stores/detail-tab-store'
 import { useUiStore } from '../stores/ui-store'
@@ -25,7 +27,7 @@ import { SideSection } from './side-section'
 import { StatCard } from './stat-card'
 import { YamlEditor } from './yaml-editor'
 
-export function ResourceDetailView({
+function ResourceDetailContent({
   clusterId,
   resourceId,
   label,
@@ -218,5 +220,33 @@ export function ResourceDetailView({
         )}
       </div>
     </div>
+  )
+}
+
+export function ResourceDetailView({
+  clusterId,
+  resourceId,
+  namespace,
+  name,
+  label
+}: {
+  clusterId: string
+  resourceId: string
+  namespace?: string
+  name: string
+  label: string
+}) {
+  const query = useResource(clusterId, resourceId, true)
+  const row = query.data?.find((r) => r.namespace === namespace && r.name === name)
+  if (!row || !resourceReady(query, true))
+    return <ResourceLoadState query={query} found={!!row} name={name} />
+  return (
+    <ResourceDetailContent
+      key={row.uid}
+      clusterId={clusterId}
+      resourceId={resourceId}
+      label={label}
+      row={row}
+    />
   )
 }

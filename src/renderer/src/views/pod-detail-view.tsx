@@ -1,22 +1,25 @@
-import { Fragment, useState } from 'react'
 import { Button } from '@renderer/ui/components/button'
 import { Card } from '@renderer/ui/components/card'
 import { Dot } from '@renderer/ui/components/dot'
 import { Icon } from '@renderer/ui/components/icon'
 import { Tabs, type TabDef } from '@renderer/ui/components/tabs'
-import { cn } from '@renderer/ui/lib/utils'
 import { TONE_TEXT } from '@renderer/ui/lib/tones'
+import { cn } from '@renderer/ui/lib/utils'
+import { Fragment, useState } from 'react'
+import { ResourceLoadState, resourceReady } from './resource-load-state'
 
 import { POD_STATUS } from '../data/static'
 import { detailTabKey, resolveDetailTab } from '../lib/detail-tab-key'
-import { useEvents, useResourceDetail } from '../queries/use-lightship-data'
+import { useEvents } from '../queries/overview'
+import { usePods } from '../queries/pods'
+import { useResourceDetail } from '../queries/resources'
 import { useDetailTabStore } from '../stores/detail-tab-store'
 import type { Pod } from '../types'
 import { EventList } from './event-list'
+import { LogsPane } from './logs-pane'
 import { PortForwardDialog } from './port-forward-dialog'
 import { StatCard } from './stat-card'
 import { YamlEditor } from './yaml-editor'
-import { LogsPane } from './logs-pane'
 
 function SideSection({ title, rows }: { title: string; rows: Array<[string, string]> }) {
   return (
@@ -36,7 +39,7 @@ function SideSection({ title, rows }: { title: string; rows: Array<[string, stri
   )
 }
 
-export function PodDetailView({ clusterId, pod }: { clusterId: string; pod: Pod }) {
+function PodDetailContent({ clusterId, pod }: { clusterId: string; pod: Pod }) {
   const tone = POD_STATUS[pod.status] ?? 'dim'
   const podRef = { kind: 'pods', namespace: pod.ns, name: pod.name }
   const { data: detail } = useResourceDetail(clusterId, podRef)
@@ -222,4 +225,20 @@ export function PodDetailView({ clusterId, pod }: { clusterId: string; pod: Pod 
       </div>
     </div>
   )
+}
+
+export function PodDetailView({
+  clusterId,
+  namespace,
+  name
+}: {
+  clusterId: string
+  namespace: string
+  name: string
+}) {
+  const query = usePods(clusterId, true)
+  const pod = query.data?.find((p) => p.ns === namespace && p.name === name)
+  if (!pod || !resourceReady(query, true))
+    return <ResourceLoadState query={query} found={!!pod} name={name} />
+  return <PodDetailContent key={`${namespace}/${name}`} clusterId={clusterId} pod={pod} />
 }

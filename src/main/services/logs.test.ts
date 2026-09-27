@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
   readPod: vi.fn()
 }))
 
-vi.mock('./k8s', () => {
+vi.mock('./k8s-client', () => {
   class Log {
     log(
       namespace: string,

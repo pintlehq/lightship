@@ -21,9 +21,10 @@ import type {
   V1ServiceAccount,
   V1StatefulSet
 } from '@kubernetes/client-node'
+import type { GenericResourceId } from '../../shared/resource-catalog'
 
 import type { Pod, ResourceRow } from '../../shared/ipc-types'
-import { ageOf } from './k8s'
+import { ageOf } from './quantities'
 
 export type Meta = {
   uid?: string
@@ -223,7 +224,7 @@ export const RESOURCE_MAPPERS: Record<string, (o: KubernetesObject) => ResourceR
       }
     }
   }
-}
+} satisfies Record<GenericResourceId, (o: KubernetesObject) => ResourceRow>
 
 // Pods use the bespoke Pod shape consumed by PodsView (no metrics). The mapper is
 // shared by listPods and the live watch.

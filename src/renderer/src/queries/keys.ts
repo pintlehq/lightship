@@ -1,4 +1,5 @@
 import type { CustomResourceParams, ResourceRef } from '../../../shared/ipc-types'
+import { resourceIdentity } from '../lib/resource-identity'
 
 export const qk = {
   pods: (clusterId?: string | null) => ['pods', clusterId ?? null] as const,
@@ -14,21 +15,15 @@ export const qk = {
   resource: (clusterId: string | null, kind: string) =>
     ['resource', clusterId ?? null, kind] as const,
   yaml: (clusterId: string | null, ref: ResourceRef) =>
-    ['yaml', clusterId ?? null, ref.kind, ref.namespace ?? null, ref.name] as const,
+    ['yaml', ...resourceIdentity(clusterId, ref)] as const,
   detail: (clusterId: string | null, ref: ResourceRef) =>
-    ['detail', clusterId ?? null, ref.kind, ref.namespace ?? null, ref.name] as const,
+    ['detail', ...resourceIdentity(clusterId, ref)] as const,
   configData: (clusterId: string | null, ref: ResourceRef) =>
-    ['config-data', clusterId ?? null, ref.kind, ref.namespace ?? null, ref.name] as const,
+    ['config-data', ...resourceIdentity(clusterId, ref)] as const,
   clusters: () => ['clusters'] as const,
   clusterConnection: (clusterId: string) => ['cluster-connection', clusterId] as const,
   events: (clusterId?: string | null, ref?: ResourceRef) =>
-    [
-      'events',
-      clusterId ?? null,
-      ref?.kind ?? null,
-      ref?.namespace ?? null,
-      ref?.name ?? null
-    ] as const,
+    ['events', ...resourceIdentity(clusterId ?? null, ref)] as const,
   customResource: (clusterId: string | null, p: CustomResourceParams) =>
     ['custom-resource', clusterId ?? null, p.group, p.version, p.plural] as const,
   helmReleases: (clusterId?: string | null) => ['helm-releases', clusterId ?? null] as const,

@@ -1,12 +1,12 @@
-import { useState } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
 import { Button } from '@renderer/ui/components/button'
 import { Card } from '@renderer/ui/components/card'
 import { Dot } from '@renderer/ui/components/dot'
 import { Icon } from '@renderer/ui/components/icon'
 import { toast } from '@renderer/ui/components/toaster'
-import { cn } from '@renderer/ui/lib/utils'
 import type { Tone } from '@renderer/ui/lib/types'
+import { cn } from '@renderer/ui/lib/utils'
+import { useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
 
 import type { ClusterMeta } from '../../../shared/ipc-types'
 import { checkClusterConnection, useClusterConnections } from '../queries/cluster-connection'
@@ -15,7 +15,7 @@ import {
   useRemoveCluster,
   useRenameCluster,
   useReorderClusters
-} from '../queries/use-lightship-data'
+} from '../queries/clusters'
 import { ConfirmDialog } from './confirm-dialog'
 
 const HEAD =

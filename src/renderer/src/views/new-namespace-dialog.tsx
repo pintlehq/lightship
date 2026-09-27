@@ -1,17 +1,17 @@
-import { useEffect, useMemo, useState } from 'react'
 import { yaml } from '@codemirror/lang-yaml'
-import CodeMirror from '@uiw/react-codemirror'
 import { Button } from '@renderer/ui/components/button'
 import { Icon } from '@renderer/ui/components/icon'
 import { Input } from '@renderer/ui/components/input'
 import { Overlay } from '@renderer/ui/components/overlay'
 import { Tabs } from '@renderer/ui/components/tabs'
 import { useThemeStore } from '@renderer/ui/stores/theme-store'
+import CodeMirror from '@uiw/react-codemirror'
+import { useEffect, useMemo, useState } from 'react'
 
 import { isValidLabelKey, isValidLabelValue, isValidNamespaceName } from '../../../shared/ipc-types'
 import { lightshipSearch } from '../lib/cm-search'
 import { lightshipCmTheme } from '../lib/cm-theme'
-import { useCreateNamespace } from '../queries/use-lightship-data'
+import { useCreateNamespace } from '../queries/namespaces'
 import { useUiStore } from '../stores/ui-store'
 
 const YAML_SEED = `apiVersion: v1

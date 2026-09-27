@@ -26,9 +26,13 @@ const mocks = vi.hoisted(() => ({
   success: vi.fn()
 }))
 
-vi.mock('../queries/use-lightship-data', () => ({
-  usePods: () => ({ data: pods, isLoading: false, isError: false, error: null }),
-  useNamespaces: () => ({ data: [{ name: 'web' }] }),
+vi.mock('../queries/pods', () => ({
+  usePods: () => ({ data: pods, isLoading: false, isError: false, error: null })
+}))
+vi.mock('../queries/namespaces', () => ({
+  useNamespaces: () => ({ data: [{ name: 'web' }] })
+}))
+vi.mock('../queries/resources', () => ({
   useCreateFromYaml: () => ({ mutateAsync: vi.fn(), isPending: false })
 }))
 vi.mock('../lib/ipc', () => ({ clusterApi: { deleteResource: mocks.deleteResource } }))

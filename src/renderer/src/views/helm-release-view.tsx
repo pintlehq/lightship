@@ -1,16 +1,16 @@
-import {
-  legacyCreateColumnHelper as createColumnHelper,
-  type LegacyColumnDef as ColumnDef
-} from '@tanstack/react-table/legacy'
-import { useQueryClient } from '@tanstack/react-query'
 import { Button } from '@renderer/ui/components/button'
 import { Card } from '@renderer/ui/components/card'
 import { DataTable } from '@renderer/ui/components/data-table'
 import { Icon } from '@renderer/ui/components/icon'
+import { useQueryClient } from '@tanstack/react-query'
+import {
+  legacyCreateColumnHelper as createColumnHelper,
+  type LegacyColumnDef as ColumnDef
+} from '@tanstack/react-table/legacy'
 
 import type { HelmRelease } from '../../../shared/ipc-types'
+import { useHelmRevisions } from '../queries/helm'
 import { qk } from '../queries/keys'
-import { useHelmRevisions } from '../queries/use-lightship-data'
 import { ViewHeader } from './view-header'
 
 const HEADER_CELL =

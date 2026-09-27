@@ -1,20 +1,20 @@
-import type { ReactNode } from 'react'
 import { EmptyState } from '@renderer/ui/shell/empty-state'
+import type { ReactNode } from 'react'
 
-import type { CustomResourceColumn, HelmRelease } from '../../../shared/ipc-types'
+import type { HelmRelease } from '../../../shared/ipc-types'
+import { NodeDetailView } from '../features/nodes/node-detail-view'
+import { NodesView } from '../features/nodes/nodes-view'
 import type { LightshipView, NodeRow, Pod, ResourceRow } from '../types'
 import { CrdInstanceDetailView } from './crd-instance-detail-view'
 import { CrdInstancesView } from './crd-instances-view'
 import { GenericView } from './generic-view'
-import { LightshipHistoryView } from './lightship-history-view'
 import { HelmReleaseView } from './helm-release-view'
 import { HelmView } from './helm-view'
+import { LightshipHistoryView } from './lightship-history-view'
 import { LogsPane } from './logs-pane'
 import { ManageClustersView } from './manage-clusters-view'
-import { NodeDetailView } from './node-detail-view'
-import { NodesView } from './nodes-view'
-import { NamespacesView } from './namespaces-view'
 import { NamespaceDetailView } from './namespace-detail-view'
+import { NamespacesView } from './namespaces-view'
 import { OverviewView } from './overview-view'
 import { PodDetailView } from './pod-detail-view'
 import { PodsView } from './pods-view'
@@ -55,11 +55,7 @@ export function renderLightshipView({
   ) => void
   onOpenResource: (clusterId: string, resourceId: string, row: ResourceRow) => void
   onOpenWorkloadLogs: (clusterId: string, resourceId: string, row: ResourceRow) => void
-  onOpenCrdInstance: (
-    view: CrdInstancesViewState,
-    columns: CustomResourceColumn[],
-    row: ResourceRow
-  ) => void
+  onOpenCrdInstance: (view: CrdInstancesViewState, row: ResourceRow) => void
   onOpenRelease: (clusterId: string, release: HelmRelease) => void
 }): ReactNode {
   if (!view) return <EmptyState />
@@ -105,9 +101,11 @@ export function renderLightshipView({
         />
       )
     case 'node-detail':
-      return <NodeDetailView clusterId={view.clusterId} node={view.node} />
+      return <NodeDetailView clusterId={view.clusterId} name={view.name} />
     case 'pod':
-      return <PodDetailView clusterId={view.clusterId} pod={view.pod} />
+      return (
+        <PodDetailView clusterId={view.clusterId} namespace={view.namespace} name={view.name} />
+      )
     case 'clusters':
       return <ManageClustersView onAdd={onAddCluster} />
     case 'history':
@@ -131,7 +129,8 @@ export function renderLightshipView({
           clusterId={view.clusterId}
           resourceId={view.resourceId}
           label={view.label}
-          row={view.row}
+          namespace={view.namespace}
+          name={view.name}
         />
       )
     case 'logs':
@@ -145,7 +144,7 @@ export function renderLightshipView({
           plural={view.plural}
           namespaced={view.namespaced}
           label={view.label}
-          onOpenRow={(row, columns) => onOpenCrdInstance(view, columns, row)}
+          onOpenRow={(row) => onOpenCrdInstance(view, row)}
         />
       )
     case 'crd-instance-detail':
@@ -157,8 +156,8 @@ export function renderLightshipView({
           plural={view.plural}
           namespaced={view.namespaced}
           crdKind={view.crdKind}
-          columns={view.columns}
-          row={view.row}
+          namespace={view.namespace}
+          name={view.name}
         />
       )
     case 'helm':

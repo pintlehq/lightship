@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 // real @kubernetes/client-node nor electron. The live informer behaviour itself
 // needs a real cluster and is runbook-verified (like live-smoke.test.ts); here we
 // assert the pure spec resolution that determines what each kind watches.
-vi.mock('./k8s', () => ({
+vi.mock('./k8s-client', () => ({
   ageOf: () => '',
   kcForCluster: async () => ({}),
   loadK8s: async () => ({})

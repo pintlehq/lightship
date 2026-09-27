@@ -23,7 +23,7 @@ vi.mock('../../lib/ipc', () => ({
   clusterApi: {},
   hasBackend: () => true
 }))
-vi.mock('../../queries/use-lightship-data', () => ({
+vi.mock('../../queries/clusters', () => ({
   useClusters: () => ({ data: [cluster] }),
   useRemoveCluster: () => ({ isPending: false, mutate: vi.fn() })
 }))

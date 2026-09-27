@@ -12,6 +12,24 @@ const stale = (client: QueryClient, key: readonly unknown[]): boolean =>
   client.getQueryCache().find({ queryKey: key, exact: true })?.state.isInvalidated ?? false
 
 describe('mutation invalidation', () => {
+  it('does not invalidate another custom API group detail with the same kind and name', async () => {
+    const client = qc()
+    const first = { kind: 'Widget', namespace: 'web', name: 'api', apiVersion: 'one.example/v1' }
+    const second = { ...first, apiVersion: 'two.example/v1' }
+    prime(
+      client,
+      qk.detail('a', first),
+      qk.detail('a', second),
+      qk.yaml('a', first),
+      qk.yaml('a', second)
+    )
+    await invalidateMutation(client, 'a', { type: 'resource', operation: 'apply', refs: [first] })
+    expect(stale(client, qk.detail('a', first))).toBe(true)
+    expect(stale(client, qk.yaml('a', first))).toBe(true)
+    expect(stale(client, qk.detail('a', second))).toBe(false)
+    expect(stale(client, qk.yaml('a', second))).toBe(false)
+  })
+
   it('refetches an active related view immediately', async () => {
     const client = qc()
     const ref = { kind: 'configmaps', namespace: 'web', name: 'settings' }

@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { KubernetesObject } from '@kubernetes/client-node'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   kcForCluster: vi.fn(async () => ({})),
@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
   replace: vi.fn(async (_object: KubernetesObject) => undefined)
 }))
 
-vi.mock('./k8s', () => ({
+vi.mock('./k8s-client', () => ({
   kcForCluster: mocks.kcForCluster,
   loadK8s: async () => ({
     loadYaml: (await import('@kubernetes/client-node')).loadYaml,

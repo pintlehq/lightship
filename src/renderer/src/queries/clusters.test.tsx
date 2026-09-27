@@ -4,8 +4,8 @@ import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ClusterMeta } from '../../../shared/ipc-types'
+import { useReorderClusters } from './clusters'
 import { qk } from './keys'
-import { useReorderClusters } from './use-lightship-data'
 
 const alpha: ClusterMeta = { id: 'alpha', name: 'alpha', context: 'alpha', server: 'https://a' }
 const beta: ClusterMeta = { id: 'beta', name: 'beta', context: 'beta', server: 'https://b' }

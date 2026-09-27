@@ -1,10 +1,3 @@
-import { useCallback, useMemo, useState } from 'react'
-import type { RowSelectionState } from '@tanstack/react-table'
-import {
-  legacyCreateColumnHelper as createColumnHelper,
-  type LegacyColumnDef as ColumnDef
-} from '@tanstack/react-table/legacy'
-import { useQueryClient } from '@tanstack/react-query'
 import { ActionMenu } from '@renderer/ui/components/action-menu'
 import { Button } from '@renderer/ui/components/button'
 import { Card } from '@renderer/ui/components/card'
@@ -14,15 +7,23 @@ import { Icon } from '@renderer/ui/components/icon'
 import { Input } from '@renderer/ui/components/input'
 import { MultiSelect, type MultiSelectOption } from '@renderer/ui/components/multi-select'
 import { toast } from '@renderer/ui/components/toaster'
+import { useQueryClient } from '@tanstack/react-query'
+import type { RowSelectionState } from '@tanstack/react-table'
+import {
+  legacyCreateColumnHelper as createColumnHelper,
+  type LegacyColumnDef as ColumnDef
+} from '@tanstack/react-table/legacy'
+import { useCallback, useMemo, useState } from 'react'
 
+import type { ResourceRow } from '../../../shared/ipc-types'
 import {
   canLogResource,
   canRestartResource,
   canScaleResource
 } from '../../../shared/resource-capabilities'
-import type { ResourceRow } from '../../../shared/ipc-types'
 import { qk } from '../queries/keys'
-import { useNamespaces, useResource } from '../queries/use-lightship-data'
+import { useNamespaces } from '../queries/namespaces'
+import { useResource } from '../queries/resources'
 import { RESOURCE_REGISTRY } from '../resources/registry'
 import { useNamespaceFilterStore } from '../stores/namespace-filter-store'
 import { useUiStore } from '../stores/ui-store'

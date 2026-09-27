@@ -1,17 +1,17 @@
-import { useMemo } from 'react'
-import {
-  legacyCreateColumnHelper as createColumnHelper,
-  type LegacyColumnDef as ColumnDef
-} from '@tanstack/react-table/legacy'
-import { useQueryClient } from '@tanstack/react-query'
 import { Button } from '@renderer/ui/components/button'
 import { Card } from '@renderer/ui/components/card'
 import { DataTable } from '@renderer/ui/components/data-table'
 import { Icon } from '@renderer/ui/components/icon'
+import { useQueryClient } from '@tanstack/react-query'
+import {
+  legacyCreateColumnHelper as createColumnHelper,
+  type LegacyColumnDef as ColumnDef
+} from '@tanstack/react-table/legacy'
+import { useMemo } from 'react'
 
 import type { CustomResourceColumn, ResourceRow } from '../../../shared/ipc-types'
 import { qk } from '../queries/keys'
-import { useCustomResource } from '../queries/use-lightship-data'
+import { useCustomResource } from '../queries/resources'
 import { ViewHeader } from './view-header'
 
 const HEADER_CELL =

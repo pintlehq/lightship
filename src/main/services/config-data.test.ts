@@ -8,13 +8,13 @@ const mocks = vi.hoisted(() => ({
   makeApiClient: vi.fn()
 }))
 
-vi.mock('./k8s', () => ({
+vi.mock('./k8s-client', () => ({
   kcForCluster: mocks.kcForCluster,
   loadK8s: async () => ({ KubernetesObjectApi: { makeApiClient: mocks.makeApiClient } })
 }))
 
 import { ConfigDataSaveResultSchema, ConfigDataUpdateSchema } from '../../shared/ipc-types'
-import { applyConfigData, getConfigData } from './resources'
+import { applyConfigData, getConfigData } from './config-data'
 
 const configMap = { kind: 'configmaps', namespace: 'web', name: 'settings' }
 const secret = { kind: 'secrets', namespace: 'web', name: 'credentials' }

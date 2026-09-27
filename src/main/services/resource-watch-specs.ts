@@ -1,6 +1,7 @@
 import type { KubeConfig, KubernetesListObject, KubernetesObject } from '@kubernetes/client-node'
+import { resourceCollectionPath, type GenericResourceId } from '../../shared/resource-catalog'
 
-import { loadK8s } from './k8s'
+import { loadK8s } from './k8s-client'
 
 export type WatchSpec = {
   path: string
@@ -13,7 +14,7 @@ export type WatchSpec = {
 // factory. Keys mirror RESOURCE_MAPPERS exactly.
 export const WATCH_SPECS: Record<string, WatchSpec> = {
   deployments: {
-    path: '/apis/apps/v1/deployments',
+    path: resourceCollectionPath('deployments'),
     list: (kc) => async () => {
       const { AppsV1Api } = await loadK8s()
       return (await kc
@@ -22,7 +23,7 @@ export const WATCH_SPECS: Record<string, WatchSpec> = {
     }
   },
   statefulsets: {
-    path: '/apis/apps/v1/statefulsets',
+    path: resourceCollectionPath('statefulsets'),
     list: (kc) => async () => {
       const { AppsV1Api } = await loadK8s()
       return (await kc
@@ -31,7 +32,7 @@ export const WATCH_SPECS: Record<string, WatchSpec> = {
     }
   },
   daemonsets: {
-    path: '/apis/apps/v1/daemonsets',
+    path: resourceCollectionPath('daemonsets'),
     list: (kc) => async () => {
       const { AppsV1Api } = await loadK8s()
       return (await kc
@@ -40,7 +41,7 @@ export const WATCH_SPECS: Record<string, WatchSpec> = {
     }
   },
   jobs: {
-    path: '/apis/batch/v1/jobs',
+    path: resourceCollectionPath('jobs'),
     list: (kc) => async () => {
       const { BatchV1Api } = await loadK8s()
       return (await kc
@@ -49,7 +50,7 @@ export const WATCH_SPECS: Record<string, WatchSpec> = {
     }
   },
   cronjobs: {
-    path: '/apis/batch/v1/cronjobs',
+    path: resourceCollectionPath('cronjobs'),
     list: (kc) => async () => {
       const { BatchV1Api } = await loadK8s()
       return (await kc
@@ -58,7 +59,7 @@ export const WATCH_SPECS: Record<string, WatchSpec> = {
     }
   },
   services: {
-    path: '/api/v1/services',
+    path: resourceCollectionPath('services'),
     list: (kc) => async () => {
       const { CoreV1Api } = await loadK8s()
       return (await kc
@@ -67,7 +68,7 @@ export const WATCH_SPECS: Record<string, WatchSpec> = {
     }
   },
   ingresses: {
-    path: '/apis/networking.k8s.io/v1/ingresses',
+    path: resourceCollectionPath('ingresses'),
     list: (kc) => async () => {
       const { NetworkingV1Api } = await loadK8s()
       return (await kc
@@ -76,7 +77,7 @@ export const WATCH_SPECS: Record<string, WatchSpec> = {
     }
   },
   endpoints: {
-    path: '/api/v1/endpoints',
+    path: resourceCollectionPath('endpoints'),
     list: (kc) => async () => {
       const { CoreV1Api } = await loadK8s()
       return (await kc
@@ -85,7 +86,7 @@ export const WATCH_SPECS: Record<string, WatchSpec> = {
     }
   },
   configmaps: {
-    path: '/api/v1/configmaps',
+    path: resourceCollectionPath('configmaps'),
     list: (kc) => async () => {
       const { CoreV1Api } = await loadK8s()
       return (await kc
@@ -95,7 +96,7 @@ export const WATCH_SPECS: Record<string, WatchSpec> = {
     table: { columns: (c) => ({ keys: c.data ?? '0' }) }
   },
   secrets: {
-    path: '/api/v1/secrets',
+    path: resourceCollectionPath('secrets'),
     list: (kc) => async () => {
       const { CoreV1Api } = await loadK8s()
       return (await kc
@@ -105,7 +106,7 @@ export const WATCH_SPECS: Record<string, WatchSpec> = {
     table: { columns: (c) => ({ type: c.type ?? '', keys: c.data ?? '0' }) }
   },
   pvc: {
-    path: '/api/v1/persistentvolumeclaims',
+    path: resourceCollectionPath('pvc'),
     list: (kc) => async () => {
       const { CoreV1Api } = await loadK8s()
       return (await kc
@@ -114,7 +115,7 @@ export const WATCH_SPECS: Record<string, WatchSpec> = {
     }
   },
   pv: {
-    path: '/api/v1/persistentvolumes',
+    path: resourceCollectionPath('pv'),
     list: (kc) => async () => {
       const { CoreV1Api } = await loadK8s()
       return (await kc
@@ -123,7 +124,7 @@ export const WATCH_SPECS: Record<string, WatchSpec> = {
     }
   },
   namespaces: {
-    path: '/api/v1/namespaces',
+    path: resourceCollectionPath('namespaces'),
     list: (kc) => async () => {
       const { CoreV1Api } = await loadK8s()
       return (await kc
@@ -132,7 +133,7 @@ export const WATCH_SPECS: Record<string, WatchSpec> = {
     }
   },
   roles: {
-    path: '/apis/rbac.authorization.k8s.io/v1/roles',
+    path: resourceCollectionPath('roles'),
     list: (kc) => async () => {
       const { RbacAuthorizationV1Api } = await loadK8s()
       return (await kc
@@ -141,7 +142,7 @@ export const WATCH_SPECS: Record<string, WatchSpec> = {
     }
   },
   rolebindings: {
-    path: '/apis/rbac.authorization.k8s.io/v1/rolebindings',
+    path: resourceCollectionPath('rolebindings'),
     list: (kc) => async () => {
       const { RbacAuthorizationV1Api } = await loadK8s()
       return (await kc
@@ -150,7 +151,7 @@ export const WATCH_SPECS: Record<string, WatchSpec> = {
     }
   },
   clusterroles: {
-    path: '/apis/rbac.authorization.k8s.io/v1/clusterroles',
+    path: resourceCollectionPath('clusterroles'),
     list: (kc) => async () => {
       const { RbacAuthorizationV1Api } = await loadK8s()
       return (await kc
@@ -159,7 +160,7 @@ export const WATCH_SPECS: Record<string, WatchSpec> = {
     }
   },
   clusterrolebindings: {
-    path: '/apis/rbac.authorization.k8s.io/v1/clusterrolebindings',
+    path: resourceCollectionPath('clusterrolebindings'),
     list: (kc) => async () => {
       const { RbacAuthorizationV1Api } = await loadK8s()
       return (await kc
@@ -168,7 +169,7 @@ export const WATCH_SPECS: Record<string, WatchSpec> = {
     }
   },
   serviceaccounts: {
-    path: '/api/v1/serviceaccounts',
+    path: resourceCollectionPath('serviceaccounts'),
     list: (kc) => async () => {
       const { CoreV1Api } = await loadK8s()
       return (await kc
@@ -177,7 +178,7 @@ export const WATCH_SPECS: Record<string, WatchSpec> = {
     }
   },
   crd: {
-    path: '/apis/apiextensions.k8s.io/v1/customresourcedefinitions',
+    path: resourceCollectionPath('crd'),
     list: (kc) => async () => {
       const { ApiextensionsV1Api } = await loadK8s()
       return (await kc
@@ -185,7 +186,7 @@ export const WATCH_SPECS: Record<string, WatchSpec> = {
         .listCustomResourceDefinition()) as KubernetesListObject<KubernetesObject>
     }
   }
-}
+} satisfies Record<GenericResourceId, WatchSpec>
 
 export function isListableResource(kind: string): boolean {
   return kind in WATCH_SPECS

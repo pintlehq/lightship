@@ -1,9 +1,9 @@
-import { describe, expect, it, vi } from 'vitest'
 import { gzipSync } from 'node:zlib'
+import { describe, expect, it, vi } from 'vitest'
 
 // helm.ts imports ./k8s (→ electron) at module load; only decodeRelease is pure,
 // so stub ./k8s to keep the test hermetic.
-vi.mock('./k8s', () => ({
+vi.mock('./k8s-client', () => ({
   ageOf: () => '',
   kcForCluster: async () => ({}),
   loadK8s: async () => ({})

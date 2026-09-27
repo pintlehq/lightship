@@ -1,4 +1,3 @@
-import type { WebContents } from 'electron'
 import {
   Observable,
   type ConfigurationOptions,
@@ -7,6 +6,7 @@ import {
   type ResponseContext,
   type V1Pod
 } from '@kubernetes/client-node'
+import type { WebContents } from 'electron'
 
 import {
   DrainEventSchema,
@@ -15,7 +15,7 @@ import {
   type DrainResult
 } from '../../shared/ipc-types'
 import { recordActivity } from './activity'
-import { kcForCluster, loadK8s } from './k8s'
+import { kcForCluster, loadK8s } from './k8s-client'
 import { cordonNode, isEvictable } from './resource-mutations'
 
 const NODE_DEADLINE_MS = 5 * 60_000

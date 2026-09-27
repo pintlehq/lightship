@@ -1,5 +1,5 @@
-import { EventEmitter } from 'node:events'
 import type { WebContents } from 'electron'
+import { EventEmitter } from 'node:events'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
   listPods: vi.fn()
 }))
 vi.mock('node:net', () => ({ createServer: mocks.createServer }))
-vi.mock('./k8s', () => ({
+vi.mock('./k8s-client', () => ({
   kcForCluster: mocks.kc,
   loadK8s: async () => ({
     CoreV1Api: class {},

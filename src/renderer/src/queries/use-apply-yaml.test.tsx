@@ -22,7 +22,7 @@ vi.mock('@renderer/ui/components/toaster', () => ({
 }))
 
 import { qk } from './keys'
-import { useApplyYaml, useCreateFromYaml } from './use-lightship-data'
+import { useApplyYaml, useCreateFromYaml } from './resources'
 
 const ref = { kind: 'deployments', namespace: 'web', name: 'api' }
 

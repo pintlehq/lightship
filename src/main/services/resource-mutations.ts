@@ -1,10 +1,10 @@
 import type { KubernetesObject, V1Pod } from '@kubernetes/client-node'
 
-import { canRestartResource, canScaleResource } from '../../shared/resource-capabilities'
 import type { ResourceRef } from '../../shared/ipc-types'
-import { kcForCluster, loadK8s } from './k8s'
-import { GVK, resolveGvk } from './resource-gvk'
+import { canRestartResource, canScaleResource } from '../../shared/resource-capabilities'
+import { kcForCluster, loadK8s } from './k8s-client'
 import { isNamespaceProtected } from './namespaces'
+import { GVK, resolveGvk } from './resource-gvk'
 
 export async function objectApi(clusterId: string) {
   const { KubernetesObjectApi } = await loadK8s()

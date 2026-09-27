@@ -2,17 +2,16 @@ import { BrowserWindow, shell } from 'electron'
 import { z } from 'zod'
 
 import {
-  ClusterAddSelectionArraySchema,
-  ClusterEventArraySchema,
-  ClusterMetaArraySchema,
-  ClusterOverviewSchema,
-  ClusterOrderSchema,
-  OverviewBundleSchema,
   ActivityInputSchema,
   ActivityRecordArraySchema,
   ActivityRecordSchema,
-  ConfigDataSchema,
+  ClusterAddSelectionArraySchema,
+  ClusterEventArraySchema,
+  ClusterMetaArraySchema,
+  ClusterOrderSchema,
+  ClusterOverviewSchema,
   ConfigDataSaveResultSchema,
+  ConfigDataSchema,
   ConfigDataUpdateSchema,
   CustomResourceListSchema,
   CustomResourceParamsSchema,
@@ -20,34 +19,42 @@ import {
   DrainResultSchema,
   HelmReleaseArraySchema,
   LogStreamOptionsSchema,
-  PortForwardOptionsSchema,
-  PtyOptionsSchema,
-  ResourceDetailSchema,
-  NodeDetailSchema,
-  NodeRowArraySchema,
   NamespaceCreateInputSchema,
   NamespaceDetailSchema,
   NamespaceSummaryListSchema,
+  NodeDetailSchema,
+  NodeRowArraySchema,
+  OverviewBundleSchema,
   PodArraySchema,
+  PortForwardOptionsSchema,
+  PtyOptionsSchema,
+  ResourceDetailSchema,
   ResourceRefSchema,
   ResourceRowArraySchema,
   ScaleReplicasSchema,
   TestResultSchema
 } from '../shared/ipc-types'
+import { approvedExternalUrl } from './electron-boundary'
+import { parseArgs, registerInvokeHandler } from './ipc-helpers'
 import * as activity from './services/activity'
+import * as connections from './services/cluster-connections'
 import * as store from './services/cluster-store'
-import * as k8s from './services/k8s'
+import * as configData from './services/config-data'
+import * as events from './services/events'
+import * as helm from './services/helm'
+import * as client from './services/k8s-client'
 import * as logs from './services/logs'
 import * as namespaces from './services/namespaces'
 import * as nodeDrain from './services/node-drain'
+import * as nodes from './services/nodes'
+import * as overview from './services/overview'
 import * as portForward from './services/port-forward'
-import * as helm from './services/helm'
 import * as pty from './services/pty'
+import * as resourceDetail from './services/resource-detail'
+import * as mutations from './services/resource-mutations'
 import * as resources from './services/resources'
 import * as uiState from './services/ui-state'
 import * as watch from './services/watch'
-import { approvedExternalUrl } from './electron-boundary'
-import { parseArgs, registerInvokeHandler } from './ipc-helpers'
 
 // Renderer-supplied arguments are untrusted — parse them before use. A failed
 // parse rejects the IPC call, which the renderer already handles.
@@ -62,22 +69,22 @@ export function registerLightshipIpc(): void {
     store.listClusters()
   )
   registerInvokeHandler('clusters:detect', parseArgs(), DetectedContextArraySchema, () =>
-    k8s.detectKubeconfigContexts()
+    connections.detectKubeconfigContexts()
   )
   registerInvokeHandler(
     'clusters:parse',
     parseArgs(z.string()),
     DetectedContextArraySchema,
-    (_e, yaml) => k8s.parseKubeconfig(yaml)
+    (_e, yaml) => connections.parseKubeconfig(yaml)
   )
   registerInvokeHandler(
     'clusters:add',
     parseArgs(ClusterAddSelectionArraySchema),
     ClusterMetaArraySchema,
-    (_e, selections) => k8s.addClusters(selections)
+    (_e, selections) => connections.addClusters(selections)
   )
   registerInvokeHandler('clusters:remove', parseArgs(Id), z.void(), async (_e, clusterId) => {
-    k8s.invalidate(clusterId)
+    client.invalidate(clusterId)
     await store.removeCluster(clusterId)
   })
   registerInvokeHandler(
@@ -93,17 +100,17 @@ export function registerLightshipIpc(): void {
     (_e, ids) => store.reorderClusters(ids)
   )
   registerInvokeHandler('clusters:test', parseArgs(Id), TestResultSchema, (_e, id) =>
-    k8s.testConnection(id)
+    connections.testConnection(id)
   )
 
   registerInvokeHandler('cluster:overview', parseArgs(Id), ClusterOverviewSchema, (_e, id) =>
-    k8s.getOverview(id)
+    overview.getOverview(id)
   )
   registerInvokeHandler('cluster:overviewBundle', parseArgs(Id), OverviewBundleSchema, (_e, id) =>
-    k8s.getOverviewBundle(id)
+    overview.getOverviewBundle(id)
   )
   registerInvokeHandler('cluster:nodes', parseArgs(Id), NodeRowArraySchema, (_e, id) =>
-    k8s.listNodes(id)
+    nodes.listNodes(id)
   )
   registerInvokeHandler(
     'cluster:namespaceSummaries',
@@ -127,13 +134,13 @@ export function registerLightshipIpc(): void {
     namespaces.deleteNamespace(id, name)
   )
   registerInvokeHandler('cluster:nodeDetail', parseArgs(Id, Id), NodeDetailSchema, (_e, id, name) =>
-    k8s.getNodeDetail(id, name)
+    nodes.getNodeDetail(id, name)
   )
   registerInvokeHandler(
     'cluster:events',
     parseArgs(Id, ResourceRefSchema.optional()),
     ClusterEventArraySchema,
-    (_e, id, ref) => k8s.listEvents(id, ref)
+    (_e, id, ref) => events.listEvents(id, ref)
   )
   registerInvokeHandler(
     'cluster:listResource',
@@ -163,25 +170,25 @@ export function registerLightshipIpc(): void {
     'cluster:deleteResource',
     parseArgs(Id, ResourceRefSchema),
     z.void(),
-    (_e, id, ref) => resources.deleteResource(id, ref)
+    (_e, id, ref) => mutations.deleteResource(id, ref)
   )
   registerInvokeHandler(
     'cluster:rolloutRestart',
     parseArgs(Id, ResourceRefSchema),
     z.void(),
-    (_e, id, ref) => resources.rolloutRestart(id, ref)
+    (_e, id, ref) => mutations.rolloutRestart(id, ref)
   )
   registerInvokeHandler(
     'cluster:scaleResource',
     parseArgs(Id, ResourceRefSchema, ScaleReplicasSchema),
     z.void(),
-    (_e, id, ref, replicas) => resources.scaleResource(id, ref, replicas)
+    (_e, id, ref, replicas) => mutations.scaleResource(id, ref, replicas)
   )
   registerInvokeHandler('cluster:cordon', parseArgs(Id, Id), z.void(), (_e, id, name) =>
-    resources.cordonNode(id, name)
+    mutations.cordonNode(id, name)
   )
   registerInvokeHandler('cluster:uncordon', parseArgs(Id, Id), z.void(), (_e, id, name) =>
-    resources.uncordonNode(id, name)
+    mutations.uncordonNode(id, name)
   )
   registerInvokeHandler(
     'cluster:drain',
@@ -196,37 +203,37 @@ export function registerLightshipIpc(): void {
     'cluster:getYaml',
     parseArgs(Id, ResourceRefSchema),
     z.string(),
-    (_e, id, ref) => resources.getYaml(id, ref)
+    (_e, id, ref) => mutations.getYaml(id, ref)
   )
   registerInvokeHandler(
     'cluster:applyYaml',
     parseArgs(Id, ResourceRefSchema, z.string()),
     z.void(),
-    (_e, id, ref, yaml) => resources.applyYaml(id, ref, yaml)
+    (_e, id, ref, yaml) => mutations.applyYaml(id, ref, yaml)
   )
   registerInvokeHandler(
     'cluster:createYaml',
     parseArgs(Id, z.string()),
     ResourceRefSchema,
-    (_e, id, yaml) => resources.createYaml(id, yaml)
+    (_e, id, yaml) => mutations.createYaml(id, yaml)
   )
   registerInvokeHandler(
     'cluster:getResourceDetail',
     parseArgs(Id, ResourceRefSchema),
     ResourceDetailSchema,
-    (_e, id, ref) => resources.getResourceDetail(id, ref)
+    (_e, id, ref) => resourceDetail.getResourceDetail(id, ref)
   )
   registerInvokeHandler(
     'cluster:getConfigData',
     parseArgs(Id, ResourceRefSchema),
     ConfigDataSchema,
-    (_e, id, ref) => resources.getConfigData(id, ref)
+    (_e, id, ref) => configData.getConfigData(id, ref)
   )
   registerInvokeHandler(
     'cluster:applyConfigData',
     parseArgs(Id, ResourceRefSchema, ConfigDataUpdateSchema),
     ConfigDataSaveResultSchema,
-    (_e, id, ref, update) => resources.applyConfigData(id, ref, update)
+    (_e, id, ref, update) => configData.applyConfigData(id, ref, update)
   )
 
   // Live log streaming: start opens follow-streams that push to

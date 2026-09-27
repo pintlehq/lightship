@@ -2,9 +2,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { DrainResult, NodeRow } from '../../../shared/ipc-types'
-import { qk } from '../queries/keys'
-import { useActivityStore } from '../stores/activity-store'
+import type { DrainResult, NodeRow } from '../../../../shared/ipc-types'
+import { qk } from '../../queries/keys'
+import { useActivityStore } from '../../stores/activity-store'
 
 const nodes: NodeRow[] = ['node-a', 'node-b'].map((name) => ({
   name,
@@ -34,15 +34,17 @@ const mocks = vi.hoisted(() => ({
   queueFailedActivity: vi.fn()
 }))
 
-vi.mock('../queries/use-lightship-data', () => ({
-  useNodes: () => ({ data: nodes, isLoading: false, isError: false, error: null }),
+vi.mock('./queries', () => ({
+  useNodes: () => ({ data: nodes, isLoading: false, isError: false, error: null })
+}))
+vi.mock('../../queries/clusters', () => ({
   useClusters: () => ({ data: [{ id: 'cluster-a', name: 'Production' }] })
 }))
-vi.mock('../lib/ipc', () => ({
+vi.mock('../../lib/ipc', () => ({
   clusterApi: { drain: mocks.drain, cordon: mocks.cordon, uncordon: mocks.uncordon },
   activityApi: { list: vi.fn().mockResolvedValue([]), record: mocks.recordActivity }
 }))
-vi.mock('../lib/record-activity', () => ({
+vi.mock('../../lib/record-activity', () => ({
   recordActivity: mocks.recordActivity,
   queueFailedActivity: mocks.queueFailedActivity
 }))

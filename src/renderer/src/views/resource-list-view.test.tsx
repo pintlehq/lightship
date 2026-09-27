@@ -17,7 +17,7 @@ const mocks = vi.hoisted(() => ({
   recordActivity: vi.fn(() => Promise.resolve(null))
 }))
 
-vi.mock('../queries/use-lightship-data', () => ({
+vi.mock('../queries/resources', () => ({
   useResource: () => ({
     data: rows,
     isLoading: false,
@@ -25,8 +25,10 @@ vi.mock('../queries/use-lightship-data', () => ({
     error: null,
     isFetching: false
   }),
-  useNamespaces: () => ({ data: [] }),
   useCreateFromYaml: () => ({ mutateAsync: vi.fn(), isPending: false })
+}))
+vi.mock('../queries/namespaces', () => ({
+  useNamespaces: () => ({ data: [] })
 }))
 
 vi.mock('../lib/ipc', () => ({

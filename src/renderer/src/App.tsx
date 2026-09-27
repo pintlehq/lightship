@@ -1,29 +1,24 @@
-import { useEffect } from 'react'
+import { Toaster } from '@renderer/ui/components/toaster'
 import { usePaletteHotkey } from '@renderer/ui/hooks/use-palette-hotkey'
+import type { PaletteGroup } from '@renderer/ui/lib/types'
 import { AppShell } from '@renderer/ui/shell/app-shell'
 import { CommandPalette } from '@renderer/ui/shell/command-palette'
 import { SettingsDialog } from '@renderer/ui/shell/settings-dialog'
 import { StatusSeg } from '@renderer/ui/shell/statusbar'
-import { Toaster } from '@renderer/ui/components/toaster'
-import type { PaletteGroup } from '@renderer/ui/lib/types'
 import { useThemeStore } from '@renderer/ui/stores/theme-store'
+import { Fragment } from 'react'
+import { useAppBootstrap } from './app/use-app-bootstrap'
+import { useAppNavigation } from './app/use-app-navigation'
 
-import type { CrdLeaf } from './lib/crd-tree'
-import { lightshipNavTab, navIconFor } from './lib/lightship-navigation'
-import { useClusterNavigation } from './queries/cluster-connection'
-import { useClusters, useOverview } from './queries/use-lightship-data'
-import { useActivityStore } from './stores/activity-store'
-import { useDetailTabStore } from './stores/detail-tab-store'
-import { useNamespaceFilterStore } from './stores/namespace-filter-store'
+import { useClusters } from './queries/clusters'
+import { useOverview } from './queries/overview'
 import { useTabsStore } from './stores/tabs-store'
 import { useTerminalsStore } from './stores/terminals-store'
 import { useUiStore } from './stores/ui-store'
-import type { CustomResourceColumn, HelmRelease } from '../../shared/ipc-types'
-import type { LightshipView, NodeRow, Pod, ResourceRow } from './types'
-import { LightshipSidebar } from './views/sidebar/lightship-sidebar'
 import { AddClusterModal } from './views/add-cluster-modal'
-import { TerminalPanel } from './views/terminal-panel'
 import { renderLightshipView } from './views/render-lightship-view'
+import { LightshipSidebar } from './views/sidebar/lightship-sidebar'
+import { TerminalPanel } from './views/terminal-panel'
 
 function App() {
   const {
@@ -38,9 +33,6 @@ function App() {
     selectTab
   } = useTabsStore()
   const ui = useUiStore()
-  const seedNs = useNamespaceFilterStore((s) => s.seed)
-  const setScopedNs = useNamespaceFilterStore((s) => s.setScoped)
-  const pruneNs = useNamespaceFilterStore((s) => s.pruneTo)
   const toggleTheme = useThemeStore((s) => s.toggle)
 
   // Live status-bar data.
@@ -56,213 +48,23 @@ function App() {
   // tab's cluster, else the first connected cluster.
   const fallbackCluster = clusters.find((c) => c.id === activeClusterId) ?? clusters[0]
   const termCount = useTerminalsStore((s) => s.sessions.length)
-  const navigateCluster = useClusterNavigation()
   usePaletteHotkey(ui.togglePalette)
 
-  // Keep per-tab namespace filters in sync with open tabs: drop entries for tabs
-  // that were closed so a reopened tab inherits the current last-applied filter.
-  useEffect(() => {
-    pruneNs(tabs.map((t) => t.id))
-  }, [tabs, pruneNs])
-
-  // Load persisted per-resource sub-tab selections once at startup. Cheap local
-  // file read; resolves long before the user opens any resource detail (tabs
-  // don't persist, so nothing is mounted at cold start).
-  useEffect(() => {
-    void useDetailTabStore.getState().hydrate()
-    void useActivityStore.getState().hydrate()
-  }, [])
-
-  // ⌘W closes the focused terminal session first; else the active tab; once no
-  // tabs remain it closes the window.
-  useEffect(() => {
-    return window.api?.window?.onCloseTab(() => {
-      const term = useTerminalsStore.getState()
-      if (term.focused && term.activeId) {
-        term.closeSession(term.activeId)
-        return
-      }
-      const { activeTab, closeTab } = useTabsStore.getState()
-      if (activeTab) closeTab(activeTab)
-      else void window.api.window.close()
-    })
-  }, [])
-
-  const selectNav = (id: string, label: string, clusterId: string) => {
-    const { seedNamespaceFilter, ...tab } = lightshipNavTab(id, label, clusterId)
-    if (!('clusterId' in tab.view)) {
-      openTab(tab)
-      return
-    }
-    navigateCluster(clusterId, clusters.find((c) => c.id === clusterId)?.name ?? clusterId, () => {
-      // Pin the last-applied namespace filter onto namespaced tabs as they open.
-      if (seedNamespaceFilter) seedNs(tab.id)
-      openTab(tab)
-    })
-  }
-
-  const onOpenPod = (clusterId: string, pod: Pod) =>
-    openTab({
-      id: `pod:${clusterId}:${pod.name}`,
-      label: `${pod.name.split('-')[0]}·pod`,
-      icon: 'box',
-      view: { kind: 'pod', clusterId, pod }
-    })
-
-  const onOpenNode = (clusterId: string, node: NodeRow) =>
-    openTab({
-      id: `node:${clusterId}:${node.name}`,
-      label: `${node.name}·node`,
-      icon: 'server',
-      view: { kind: 'node-detail', clusterId, node }
-    })
-
-  const onOpenNamespace = (clusterId: string, name: string) =>
-    openTab({
-      id: `namespace:${clusterId}:${name}`,
-      label: `${name}·namespace`,
-      icon: 'folder',
-      view: { kind: 'namespace-detail', clusterId, name }
-    })
-
-  const onOpenNamespacedResource = (
-    clusterId: string,
-    resourceId: string,
-    label: string,
-    namespace: string
-  ) => {
-    const { seedNamespaceFilter: _seed, ...tab } = lightshipNavTab(resourceId, label, clusterId)
-    setScopedNs(tab.id, [namespace])
-    openTab(tab)
-  }
-
-  // Open one CRD's live-instances browser. Shared by the CRD list row and the
-  // sidebar's grouped Custom Resources tree so both open the identical tab.
-  const openCrdInstances = (
-    clusterId: string,
-    meta: {
-      name: string
-      kind: string
-      group: string
-      version: string
-      plural: string
-      namespaced: boolean
-    }
-  ) => {
-    const label = meta.kind || meta.name
-    openTab({
-      id: `crd:${clusterId}:${meta.name}`,
-      label,
-      icon: 'code',
-      view: {
-        kind: 'crd-instances',
-        clusterId,
-        group: meta.group,
-        version: meta.version,
-        plural: meta.plural,
-        namespaced: meta.namespaced,
-        crdKind: meta.kind,
-        label
-      }
-    })
-  }
-
-  // Open one custom-resource instance's detail (Properties + YAML + Events).
-  const onOpenCrdInstance = (
-    view: Extract<LightshipView, { kind: 'crd-instances' }>,
-    columns: CustomResourceColumn[],
-    row: ResourceRow
-  ) => {
-    openTab({
-      id: `crd-detail:${view.clusterId}:${view.group}/${view.version}/${view.plural}:${row.namespace ?? ''}:${row.name}`,
-      label: row.name,
-      icon: 'code',
-      view: {
-        kind: 'crd-instance-detail',
-        clusterId: view.clusterId,
-        group: view.group,
-        version: view.version,
-        plural: view.plural,
-        namespaced: view.namespaced,
-        crdKind: view.crdKind,
-        columns,
-        row,
-        label: row.name
-      }
-    })
-  }
-
-  const onOpenCrdKind = (clusterId: string, leaf: CrdLeaf) =>
-    navigateCluster(clusterId, clusters.find((c) => c.id === clusterId)?.name ?? clusterId, () =>
-      openCrdInstances(clusterId, leaf)
-    )
-
-  const onOpenResource = (clusterId: string, resourceId: string, row: ResourceRow) => {
-    // A CRD row opens a browser of that CRD's live instances (not a YAML detail).
-    if (resourceId === 'crd') {
-      const c = row.columns
-      openCrdInstances(clusterId, {
-        name: row.name,
-        kind: c.kind ?? '',
-        group: c.group ?? '',
-        version: c.version ?? '',
-        plural: c.plural ?? '',
-        namespaced: c.scope === 'Namespaced'
-      })
-      return
-    }
-    openTab({
-      id: `${clusterId}:${resourceId}:${row.uid}`,
-      label: row.name,
-      icon: navIconFor(resourceId),
-      view: { kind: 'resource-detail', clusterId, resourceId, label: row.name, row }
-    })
-  }
-
-  const onOpenRelease = (clusterId: string, r: HelmRelease) =>
-    openTab({
-      id: `helm:${clusterId}:${r.namespace}/${r.name}`,
-      label: `${r.name}·helm`,
-      icon: 'zap',
-      view: { kind: 'helm-release', clusterId, namespace: r.namespace, name: r.name, label: r.name }
-    })
-
-  // Logs: a multiplexed pane streaming the given pods, optionally one container.
-  const onOpenLogs = (clusterId: string, pods: Pod[], container?: string) => {
-    if (pods.length === 0) return
-    const refs = pods.map((p) => ({ kind: 'pods', namespace: p.ns, name: p.name }))
-    const podKeys = pods
-      .map((p) => `${p.ns}/${p.name}`)
-      .sort()
-      .join(',')
-    const id = `logs:${clusterId}:${podKeys}${container ? `/${container}` : ''}`
-    const base = pods.length === 1 ? pods[0].name.split('-')[0] : `${pods.length} pods`
-    const label = `${base}${container ? `/${container}` : ''}·logs`
-    openTab({ id, label, icon: 'file', view: { kind: 'logs', clusterId, refs, label, container } })
-  }
-
-  // Logs from a workload row — the backend resolves the workload to its pods.
-  const onOpenWorkloadLogs = (clusterId: string, resourceId: string, row: ResourceRow) => {
-    const ref = { kind: resourceId, namespace: row.namespace, name: row.name }
-    const id = `logs:${clusterId}:${resourceId}/${row.namespace ?? ''}/${row.name}`
-    const label = `${row.name}·logs`
-    openTab({ id, label, icon: 'file', view: { kind: 'logs', clusterId, refs: [ref], label } })
-  }
-
-  // Exec: open a kubectl-exec terminal into a pod's container, in its tab's cluster.
-  const onExec = (clusterId: string, pod: Pod, container?: string) => {
-    const cl = clusters.find((c) => c.id === clusterId)
-    if (!cl) return
-    useTerminalsStore.getState().newSession({
-      clusterId: cl.id,
-      clusterName: cl.name,
-      namespace: pod.ns,
-      pod: pod.name,
-      container,
-      title: container ? `${pod.name}/${container}` : pod.name
-    })
-    ui.setShowTerminal(true)
-  }
+  useAppBootstrap(tabs)
+  const {
+    selectNav,
+    onOpenPod,
+    onOpenNode,
+    onOpenNamespace,
+    onOpenNamespacedResource,
+    onOpenCrdInstance,
+    onOpenCrdKind,
+    onOpenResource,
+    onOpenRelease,
+    onOpenLogs,
+    onOpenWorkloadLogs,
+    onExec
+  } = useAppNavigation(clusters)
 
   const paletteGroups: PaletteGroup[] = [
     {
@@ -437,21 +239,23 @@ function App() {
         </>
       }
     >
-      {renderLightshipView({
-        view,
-        activeTabId: active?.id ?? null,
-        onAddCluster: () => ui.setAddClusterOpen(true),
-        onOpenPod,
-        onOpenLogs,
-        onExec,
-        onOpenNode,
-        onOpenNamespace,
-        onOpenNamespacedResource,
-        onOpenResource,
-        onOpenWorkloadLogs,
-        onOpenCrdInstance,
-        onOpenRelease
-      })}
+      <Fragment key={active?.id}>
+        {renderLightshipView({
+          view,
+          activeTabId: active?.id ?? null,
+          onAddCluster: () => ui.setAddClusterOpen(true),
+          onOpenPod,
+          onOpenLogs,
+          onExec,
+          onOpenNode,
+          onOpenNamespace,
+          onOpenNamespacedResource,
+          onOpenResource,
+          onOpenWorkloadLogs,
+          onOpenCrdInstance,
+          onOpenRelease
+        })}
+      </Fragment>
     </AppShell>
   )
 }

@@ -33,8 +33,15 @@ deterministic stop function.
 
 `src/shared/ipc-types.ts` contains Zod schemas for data crossing the process boundary and derives
 TypeScript types from those schemas. These contracts are the source of truth for IPC inputs,
-outputs, events, and the `LightshipApi` interface. Shared resource capabilities also define which
-kinds may be logged, forwarded, restarted, or scaled.
+outputs, events, and the `LightshipApi` interface. `src/shared/resource-catalog.ts` owns built-in
+resource IDs, API versions, kinds, plurals, namespace scope, and action capabilities. Main-process
+GVK and watch paths derive from it; renderer columns, labels, and icons remain browser-owned.
+
+Main services import their dependencies directly: `k8s-client` owns the dynamic Kubernetes import
+and client cache; cluster connections, nodes, overview, and events each have their own service.
+Resource listing, Table API transport, resource detail, mutations, and ConfigMap/Secret data editing
+are separate modules. Quantity conversion, formatting, age, and allocation helpers are pure and
+can be tested without loading Electron.
 
 ### Renderer
 
@@ -42,13 +49,26 @@ kinds may be logged, forwarded, restarted, or scaled.
 facade in `src/renderer/src/lib/ipc.ts`. When Electron is absent, read paths use explicit mock or
 empty values, and the dedicated E2E mode supplies mock cluster behavior for browser journeys.
 
+The renderer's `app` directory owns startup effects and navigation. `features/nodes` groups node
+views, columns, action orchestration, queries, and tests. Other query hooks are grouped by domain
+under `queries`; keys, live subscriptions, and mutation invalidation remain shared. Features move
+together when their complexity warrants it, without requiring every feature to use the same folders.
+
 ## State ownership
 
 TanStack Query owns backend and Kubernetes state. Query keys are centralized, live watch events
 update cached lists, and mutations explicitly invalidate affected queries.
 
 Zustand owns local interaction state such as tabs, panels, filters, terminal sessions, active port
-forwards, and theme preference. Backend-owned Kubernetes objects are not copied into stores.
+forwards, and theme preference. Resource tabs store identity and navigation metadata, not Kubernetes
+row snapshots. Detail views resolve current rows (including custom-resource columns) from Query,
+revalidate on mount, and stop rendering resource actions when the lookup fails or the row is gone.
+An object recreated under the same name becomes the current object for that tab.
+
+Resource identity includes cluster, kind, namespace, name, and the API version for custom resources.
+The same identity drives resource detail tab IDs and object query keys. Namespace/name query-key
+positions remain stable for prefix invalidation. Built-in remembered sub-tab keys are unchanged;
+custom-resource preferences also include API group/version and default when no matching key exists.
 
 Some UI preferences cross these categories deliberately:
 

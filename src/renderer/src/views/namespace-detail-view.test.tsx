@@ -42,8 +42,10 @@ const detail: NamespaceDetail = {
   }
 }
 
-vi.mock('../queries/use-lightship-data', () => ({
-  useNamespaceDetail: () => ({ data: detail, isLoading: false, isError: false }),
+vi.mock('../queries/namespaces', () => ({
+  useNamespaceDetail: () => ({ data: detail, isLoading: false, isError: false })
+}))
+vi.mock('../queries/overview', () => ({
   useEvents: () => ({ data: [] })
 }))
 

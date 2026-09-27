@@ -1,6 +1,6 @@
-import { EventEmitter } from 'node:events'
-import type { WebContents } from 'electron'
 import type { V1Pod } from '@kubernetes/client-node'
+import type { WebContents } from 'electron'
+import { EventEmitter } from 'node:events'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
@@ -19,7 +19,7 @@ vi.mock('./resource-mutations', () => ({
     pod.status?.phase !== 'Failed'
 }))
 vi.mock('./activity', () => ({ recordActivity: mocks.activity }))
-vi.mock('./k8s', () => ({
+vi.mock('./k8s-client', () => ({
   loadK8s: async () => ({ CoreV1Api: class {} }),
   kcForCluster: async () => ({
     makeApiClient: () => ({

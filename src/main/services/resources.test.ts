@@ -15,7 +15,7 @@ const rec = vi.hoisted(() => ({
   } as { apiVersion: string; kind: string; metadata: { name: string; namespace?: string } }
 }))
 
-vi.mock('./k8s', () => ({
+vi.mock('./k8s-client', () => ({
   ageOf: () => '',
   kcForCluster: async () => ({}),
   loadK8s: async () => ({
@@ -39,22 +39,17 @@ vi.mock('./k8s', () => ({
   })
 }))
 
+import { mapPod, podKey, RESOURCE_MAPPERS } from './resource-mappers'
 import {
   cordonNode,
   createYaml,
   deleteResource,
   isEvictable,
-  isListableResource,
-  mapPod,
-  parseCpu,
-  parseMem,
-  podKey,
-  RESOURCE_MAPPERS,
   rolloutRestart,
   scaleResource,
-  uncordonNode,
-  WATCH_SPECS
-} from './resources'
+  uncordonNode
+} from './resource-mutations'
+import { isListableResource, WATCH_SPECS } from './resource-watch-specs'
 
 type PodArg = Parameters<typeof mapPod>[0]
 type RowArg = Parameters<(typeof RESOURCE_MAPPERS)[string]>[0]
@@ -80,27 +75,6 @@ describe('isListableResource', () => {
     for (const kind of ['pods', 'helm', 'rbac', 'nodes', '']) {
       expect(isListableResource(kind)).toBe(false)
     }
-  })
-})
-
-describe('parseCpu (millicores)', () => {
-  it('normalizes quantities to millicores', () => {
-    expect(parseCpu('500m')).toBe(500)
-    expect(parseCpu('250m')).toBe(250)
-    expect(parseCpu('1')).toBe(1000)
-    expect(parseCpu('0.5')).toBe(500)
-    expect(parseCpu('')).toBe(0)
-    expect(parseCpu('garbage')).toBe(0)
-  })
-})
-
-describe('parseMem (bytes, rounded)', () => {
-  it('normalizes quantities to bytes', () => {
-    expect(parseMem('1Gi')).toBe(1024 ** 3)
-    expect(parseMem('512Mi')).toBe(512 * 1024 ** 2)
-    expect(parseMem('1.5Gi')).toBe(Math.round(1.5 * 1024 ** 3))
-    expect(parseMem(' 256Mi ')).toBe(256 * 1024 ** 2)
-    expect(parseMem('nope')).toBe(0)
   })
 })
 

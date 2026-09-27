@@ -1,7 +1,8 @@
 import { gunzipSync } from 'node:zlib'
 
 import type { HelmRelease } from '../../shared/ipc-types'
-import { ageOf, kcForCluster, loadK8s } from './k8s'
+import { kcForCluster, loadK8s } from './k8s-client'
+import { ageOf } from './quantities'
 
 // Helm 3 stores each release revision in a Secret (type helm.sh/release.v1,
 // label owner=helm). `data.release` is base64(base64(gzip(json))) — the k8s API

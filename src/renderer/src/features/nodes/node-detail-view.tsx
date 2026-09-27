@@ -1,28 +1,31 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Badge } from '@renderer/ui/components/badge'
 import { Card } from '@renderer/ui/components/card'
 import { DataTable } from '@renderer/ui/components/data-table'
 import { Dot } from '@renderer/ui/components/dot'
 import { Icon } from '@renderer/ui/components/icon'
 import { Tabs, type TabDef } from '@renderer/ui/components/tabs'
-import { cn } from '@renderer/ui/lib/utils'
 import { TONE_TEXT } from '@renderer/ui/lib/tones'
+import { cn } from '@renderer/ui/lib/utils'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { ResourceLoadState, resourceReady } from '../../views/resource-load-state'
 
-import { podColumns } from '../columns/pod-columns'
-import { NODE_STATUS } from '../data/static'
-import { detailTabKey, resolveDetailTab } from '../lib/detail-tab-key'
-import { useEvents, useNodeDetail, usePods } from '../queries/use-lightship-data'
-import { useDetailTabStore } from '../stores/detail-tab-store'
-import type { NodeRow } from '../types'
 import type {
   NodeAllocatedResource,
   NodeResourceValue,
   Pod,
   ResourceCondition
-} from '../../../shared/ipc-types'
-import { EventList } from './event-list'
-import { Sparkline } from './sparkline'
-import { StatCard } from './stat-card'
+} from '../../../../shared/ipc-types'
+import { podColumns } from '../../columns/pod-columns'
+import { NODE_STATUS } from '../../data/static'
+import { detailTabKey, resolveDetailTab } from '../../lib/detail-tab-key'
+import { useEvents } from '../../queries/overview'
+import { usePods } from '../../queries/pods'
+import { useDetailTabStore } from '../../stores/detail-tab-store'
+import type { NodeRow } from '../../types'
+import { EventList } from '../../views/event-list'
+import { Sparkline } from '../../views/sparkline'
+import { StatCard } from '../../views/stat-card'
+import { useNodeDetail, useNodes } from './queries'
 
 const HEADER_CELL =
   'text-left font-medium text-2xs uppercase tracking-[0.06em] text-dim px-2.5 py-2 bg-muted border-b border-border whitespace-nowrap'
@@ -173,7 +176,7 @@ function ExpandableMap({ label, map }: { label: string; map: Record<string, stri
   )
 }
 
-export function NodeDetailView({ clusterId, node }: { clusterId: string; node: NodeRow }) {
+function NodeDetailContent({ clusterId, node }: { clusterId: string; node: NodeRow }) {
   const { data: detail } = useNodeDetail(clusterId, node.name)
   const { data: events = [] } = useEvents(clusterId, { kind: 'nodes', name: node.name })
   const { data: pods = [] } = usePods(clusterId)
@@ -385,4 +388,12 @@ export function NodeDetailView({ clusterId, node }: { clusterId: string; node: N
       </div>
     </div>
   )
+}
+
+export function NodeDetailView({ clusterId, name }: { clusterId: string; name: string }) {
+  const query = useNodes(clusterId, true)
+  const node = query.data?.find((n) => n.name === name)
+  if (!node || !resourceReady(query, true))
+    return <ResourceLoadState query={query} found={!!node} name={name} />
+  return <NodeDetailContent key={name} clusterId={clusterId} node={node} />
 }

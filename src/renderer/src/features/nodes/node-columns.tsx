@@ -1,13 +1,13 @@
-import { legacyCreateColumnHelper as createColumnHelper } from '@tanstack/react-table/legacy'
 import { Badge } from '@renderer/ui/components/badge'
 import { Dot } from '@renderer/ui/components/dot'
 import { Icon } from '@renderer/ui/components/icon'
-import { cn } from '@renderer/ui/lib/utils'
 import { TONE_TEXT } from '@renderer/ui/lib/tones'
+import { cn } from '@renderer/ui/lib/utils'
+import { legacyCreateColumnHelper as createColumnHelper } from '@tanstack/react-table/legacy'
 
-import { NODE_STATUS } from '../data/static'
-import type { NodeRow } from '../types'
-import { UsageBar } from '../views/usage-bar'
+import { NODE_STATUS } from '../../data/static'
+import type { NodeRow } from '../../types'
+import { UsageBar } from '../../views/usage-bar'
 
 const col = createColumnHelper<NodeRow>()
 

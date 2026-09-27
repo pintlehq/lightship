@@ -6,16 +6,18 @@
  * `|`. Cluster-scoped resources (no namespace) get an empty namespace segment.
  *
  * Keyed by identity (cluster/kind/namespace/name) rather than the content-tab id
- * — tab ids embed an ephemeral uid and tabs don't persist, so they can't survive
- * an app restart.
+ * — tabs themselves are not restored after an app restart.
  */
 export function detailTabKey(
   clusterId: string | null,
   kind: string,
   namespace: string | undefined,
-  name: string
+  name: string,
+  apiVersion?: string
 ): string {
-  return `${clusterId ?? ''}|${kind}|${namespace ?? ''}|${name}`
+  const key = `${clusterId ?? ''}|${kind}|${namespace ?? ''}|${name}`
+  // Built-in keys are persisted already; custom resources must also include their API group.
+  return apiVersion ? `${key}|${apiVersion}` : key
 }
 
 /**

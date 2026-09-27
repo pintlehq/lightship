@@ -23,7 +23,8 @@ import {
   type NamespaceSummary,
   type NamespaceSummaryList
 } from '../../shared/ipc-types'
-import { ageOf, kcForCluster, loadK8s } from './k8s'
+import { kcForCluster, loadK8s } from './k8s-client'
+import { ageOf } from './quantities'
 
 export const isNamespaceProtected = (name: string): boolean =>
   name === 'default' || name.startsWith('kube-')

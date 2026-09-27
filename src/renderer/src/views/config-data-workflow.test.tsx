@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, within } from '@testing-library/react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ConfigData, ConfigDataSaveResult, ConfigDataUpdate } from '../../../shared/ipc-types'
 
@@ -19,7 +19,7 @@ vi.mock('@uiw/react-codemirror', () => ({
   )
 }))
 
-vi.mock('../queries/use-lightship-data', () => ({
+vi.mock('../queries/resources', () => ({
   useConfigData: () => ({ data: mocks.data, isLoading: false, isError: false }),
   useApplyConfigData: () => ({
     mutate: mocks.mutate,

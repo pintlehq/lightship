@@ -6,7 +6,7 @@ import { OverviewView } from './overview-view'
 
 const mocks = vi.hoisted(() => ({ refetch: vi.fn() }))
 
-vi.mock('../queries/use-lightship-data', () => ({
+vi.mock('../queries/overview', () => ({
   useOverviewBundle: () => ({
     data: undefined,
     dataUpdatedAt: 0,
