@@ -18,4 +18,9 @@ describe('tone maps', () => {
     }
     expect(Object.keys(TONE_BG).sort()).toEqual([...TONES].sort())
   })
+
+  it('uses independent tokens for neutral text and status indicators', () => {
+    expect(TONE_TEXT.dim).toBe('text-dim')
+    expect(TONE_BG.dim).toBe('bg-status-neutral')
+  })
 })

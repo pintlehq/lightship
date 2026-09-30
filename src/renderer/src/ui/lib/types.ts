@@ -1,5 +1,6 @@
 import type { CellData, RowData, TableFeatures } from '@tanstack/react-table'
 import type { IconName } from '../components/icon'
+import type { SortValue } from './table-sorting'
 
 /** Health / status tones shared across dots, badges, status segments. */
 export type Tone = 'success' | 'warning' | 'destructive' | 'info' | 'dim' | 'primary'
@@ -71,5 +72,7 @@ declare module '@tanstack/react-table' {
     headerClassName?: string
     /** Fixed-width utility, e.g. `w-12`. */
     widthClassName?: string
+    /** Comparable value when the cell's display value needs a different sort order. */
+    sortValue?: (row: TData) => SortValue
   }
 }

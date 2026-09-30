@@ -1,13 +1,15 @@
+import type { SortingState } from '@tanstack/react-table'
 import { Button } from '@renderer/ui/components/button'
 import { Card } from '@renderer/ui/components/card'
 import { DataTable } from '@renderer/ui/components/data-table'
 import { Icon } from '@renderer/ui/components/icon'
+import { durationValue } from '@renderer/ui/lib/table-sorting'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   legacyCreateColumnHelper as createColumnHelper,
   type LegacyColumnDef as ColumnDef
 } from '@tanstack/react-table/legacy'
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 
 import type { CustomResourceColumn, ResourceRow } from '../../../shared/ipc-types'
 import { qk } from '../queries/keys'
@@ -37,6 +39,7 @@ export function CrdInstancesView({
   label: string
   onOpenRow?: (row: ResourceRow, columns: CustomResourceColumn[]) => void
 }) {
+  const [sorting, setSorting] = useState<SortingState>([])
   const params = { group, version, plural, namespaced }
   const { data, isLoading, isError, error } = useCustomResource(clusterId, params)
   const rows = data?.rows ?? []
@@ -75,7 +78,11 @@ export function CrdInstancesView({
       )
     }
     cols.push(
-      col.accessor('age', { header: 'AGE', size: 90, meta: { cellClassName: 'text-faint' } })
+      col.accessor('age', {
+        header: 'AGE',
+        size: 90,
+        meta: { cellClassName: 'text-faint', sortValue: (row) => durationValue(row.age) }
+      })
     )
     return cols
   }, [namespaced, printColumns])
@@ -118,6 +125,9 @@ export function CrdInstancesView({
           </div>
         ) : (
           <DataTable
+            enableSorting
+            sorting={sorting}
+            onSortingChange={setSorting}
             data={rows}
             columns={columns}
             getRowId={(r) => r.uid}

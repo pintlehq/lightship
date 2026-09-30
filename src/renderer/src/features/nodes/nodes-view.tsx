@@ -11,7 +11,7 @@ import { Tabs } from '@renderer/ui/components/tabs'
 import { TONE_TEXT } from '@renderer/ui/lib/tones'
 import { cn } from '@renderer/ui/lib/utils'
 import { useQueryClient } from '@tanstack/react-query'
-import type { RowSelectionState } from '@tanstack/react-table'
+import type { RowSelectionState, SortingState } from '@tanstack/react-table'
 import {
   legacyCreateColumnHelper as createColumnHelper,
   type LegacyColumnDef as ColumnDef
@@ -47,6 +47,7 @@ export function NodesView({
   clusterId: string
   onOpenNode?: (node: NodeRow) => void
 }) {
+  const [sorting, setSorting] = useState<SortingState>([])
   const { data: nodes = [], isLoading, isError, error } = useNodes(clusterId)
   const { data: clusters = [] } = useClusters()
   const readOnly = useUiStore((s) => s.readOnly)
@@ -218,7 +219,13 @@ export function NodesView({
             { value: 'cards', label: 'Cards', icon: 'layers' }
           ]}
         />
-        <Button variant="outline" size="icon" disabled={refreshing} onClick={() => void refresh()}>
+        <Button
+          aria-label="Refresh nodes"
+          variant="outline"
+          size="icon"
+          disabled={refreshing}
+          onClick={() => void refresh()}
+        >
           <Icon name="refresh" className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
         </Button>
       </div>
@@ -244,6 +251,9 @@ export function NodesView({
       ) : view === 'table' ? (
         <Card className="min-h-0 flex-1 overflow-hidden">
           <DataTable
+            enableSorting
+            sorting={sorting}
+            onSortingChange={setSorting}
             data={rows}
             columns={columns}
             getRowId={(n) => n.name}

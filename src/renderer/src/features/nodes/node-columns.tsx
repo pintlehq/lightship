@@ -3,6 +3,7 @@ import { Dot } from '@renderer/ui/components/dot'
 import { Icon } from '@renderer/ui/components/icon'
 import { TONE_TEXT } from '@renderer/ui/lib/tones'
 import { cn } from '@renderer/ui/lib/utils'
+import { durationValue } from '@renderer/ui/lib/table-sorting'
 import { legacyCreateColumnHelper as createColumnHelper } from '@tanstack/react-table/legacy'
 
 import { NODE_STATUS } from '../../data/static'
@@ -25,7 +26,7 @@ export const nodeColumns = [
       )
     }
   }),
-  col.display({
+  col.accessor((node) => (node.roles.includes('control-plane') ? 'control-plane' : 'worker'), {
     id: 'role',
     header: 'ROLE',
     size: 120,
@@ -82,5 +83,9 @@ export const nodeColumns = [
   }),
   col.accessor('type', { header: 'INSTANCE', size: 150, meta: { cellClassName: 'text-dim' } }),
   col.accessor('ver', { header: 'VERSION', size: 120, meta: { cellClassName: 'text-dim' } }),
-  col.accessor('age', { header: 'AGE', size: 70, meta: { cellClassName: 'text-faint' } })
+  col.accessor('age', {
+    header: 'AGE',
+    size: 70,
+    meta: { cellClassName: 'text-faint', sortValue: (node) => durationValue(node.age) }
+  })
 ]

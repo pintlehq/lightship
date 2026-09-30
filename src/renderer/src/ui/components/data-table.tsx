@@ -20,6 +20,7 @@ import {
 import { useVirtualizer } from '@tanstack/react-virtual'
 
 import { reorderById } from '@renderer/ui/lib/reorder'
+import { compareSortValues } from '@renderer/ui/lib/table-sorting'
 import type { TabbarReorderPlacement } from '@renderer/ui/lib/types'
 import { cn } from '@renderer/ui/lib/utils'
 // Pull in the ColumnMeta augmentation (align/cellClassName/…).
@@ -194,6 +195,7 @@ export function DataTable<TData extends RowData>({
   if (sorting) state.sorting = sorting
   state.columnOrder = columnOrder
   if (resizableColumns) state.columnSizing = columnSizing
+  const sortDirectionRef = React.useRef<SortingState>([])
 
   const table = useReactTable({
     data,
@@ -202,10 +204,25 @@ export function DataTable<TData extends RowData>({
     state,
     enableRowSelection,
     enableSorting: !!enableSorting,
+    enableMultiSort: false,
+    sortDescFirst: false,
+    defaultColumn: {
+      // Handle display-only sort keys without changing the values received by cell renderers.
+      sortUndefined: false,
+      sortFn: (a, b, id): number => {
+        const sortValue = table.getColumn(id)?.columnDef.meta?.sortValue
+        const descending = sortDirectionRef.current.some((sort) => sort.id === id && sort.desc)
+        return compareSortValues(
+          sortValue ? sortValue(a.original) : a.getValue(id),
+          sortValue ? sortValue(b.original) : b.getValue(id),
+          descending
+        )
+      }
+    },
     enableColumnResizing: !!resizableColumns,
     columnResizeMode: 'onChange',
     onRowSelectionChange,
-    onSortingChange,
+    ...(onSortingChange ? { onSortingChange } : {}),
     onColumnOrderChange: setColumnOrder,
     onColumnSizingChange: setColumnSizing,
     manualSorting: !!manualSorting,
@@ -213,6 +230,9 @@ export function DataTable<TData extends RowData>({
     getSortedRowModel: enableSorting && !manualSorting ? getSortedRowModel() : undefined
   })
 
+  // Resolved comparison functions can be cached across renders. Read the current direction
+  // through a ref so missing-value placement also updates when the direction changes.
+  sortDirectionRef.current = table.getState().sorting
   const rows = table.getRowModel().rows
   const colCount = table.getVisibleLeafColumns().length
   const scrollRef = React.useRef<HTMLDivElement>(null)
@@ -337,13 +357,20 @@ export function DataTable<TData extends RowData>({
     e.stopPropagation()
   }, [])
 
-  const handleSortButtonClick = React.useCallback(
-    (header: Header<TData, unknown>) => (e: React.MouseEvent<HTMLButtonElement>) => {
+  const handleHeaderSort = React.useCallback(
+    (header: Header<TData, unknown>) => (e: React.MouseEvent<HTMLElement>) => {
       e.stopPropagation()
       if (resizeDragRef.current || suppressHeaderClick.current) {
         e.preventDefault()
         suppressHeaderClick.current = false
         return
+      }
+      if (e.target instanceof Element) {
+        if (
+          e.target.closest('[data-table-header-control="true"]') &&
+          !e.target.closest('[data-table-sort-button="true"]')
+        )
+          return
       }
       header.column.getToggleSortingHandler()?.(e)
     },
@@ -592,13 +619,17 @@ export function DataTable<TData extends RowData>({
             <tr key={hg.id}>
               {hg.headers.map((header) => {
                 const meta = header.column.columnDef.meta
-                const canSort = !!enableSorting && header.column.getCanSort()
+                const canSort =
+                  !!enableSorting &&
+                  !isUtilityColumnId(header.column.id) &&
+                  header.column.getCanSort()
                 const sortDir = header.column.getIsSorted()
                 const canResize = !!resizableColumns && header.column.getCanResize()
                 const canReorder = reorderEnabled && isMovableColumn(header.column)
                 return (
                   <th
                     key={header.id}
+                    onClick={canSort ? handleHeaderSort(header) : undefined}
                     aria-sort={
                       canSort
                         ? sortDir === 'asc'
@@ -626,7 +657,8 @@ export function DataTable<TData extends RowData>({
                       meta?.headerClassName,
                       resizableColumns && 'min-w-0',
                       stickyHeader && 'sticky top-0 z-10',
-                      canReorder && 'cursor-grab select-none active:cursor-grabbing'
+                      canReorder && 'cursor-grab select-none active:cursor-grabbing',
+                      canSort && 'cursor-pointer'
                     )}
                   >
                     {columnDropTarget?.id === header.column.id && (
@@ -658,9 +690,10 @@ export function DataTable<TData extends RowData>({
                           type="button"
                           aria-label={`Sort ${header.column.id} column`}
                           data-table-header-control="true"
+                          data-table-sort-button="true"
                           data-testid={`data-table-sort-${header.column.id}`}
                           draggable={false}
-                          onClick={handleSortButtonClick(header)}
+                          onClick={handleHeaderSort(header)}
                           onDragStart={(e) => {
                             e.preventDefault()
                             e.stopPropagation()

@@ -8,7 +8,7 @@ import { Input } from '@renderer/ui/components/input'
 import { MultiSelect, type MultiSelectOption } from '@renderer/ui/components/multi-select'
 import { toast } from '@renderer/ui/components/toaster'
 import { useQueryClient } from '@tanstack/react-query'
-import type { RowSelectionState } from '@tanstack/react-table'
+import type { RowSelectionState, SortingState } from '@tanstack/react-table'
 import {
   legacyCreateColumnHelper as createColumnHelper,
   type LegacyColumnDef as ColumnDef
@@ -53,6 +53,7 @@ export function PodsView({
   onExec: (pod: Pod, container?: string) => void
   tabId: string
 }) {
+  const [sorting, setSorting] = useState<SortingState>([])
   const { data: pods = [], isLoading, isError, error } = usePods(clusterId)
   const { data: nsList = [] } = useNamespaces(clusterId)
   const readOnly = useUiStore((s) => s.readOnly)
@@ -245,6 +246,7 @@ export function PodsView({
           <Button
             variant="outline"
             size="icon"
+            aria-label="Refresh pods"
             className="h-8 w-8"
             onClick={() => void qc.invalidateQueries({ queryKey: qk.pods(clusterId) })}
           >
@@ -274,6 +276,9 @@ export function PodsView({
           </div>
         ) : (
           <DataTable
+            enableSorting
+            sorting={sorting}
+            onSortingChange={setSorting}
             data={rows}
             columns={columns}
             getRowId={podId}

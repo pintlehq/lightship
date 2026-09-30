@@ -1,3 +1,4 @@
+import type { SortingState } from '@tanstack/react-table'
 import { Badge } from '@renderer/ui/components/badge'
 import { Card } from '@renderer/ui/components/card'
 import { DataTable } from '@renderer/ui/components/data-table'
@@ -177,6 +178,7 @@ function ExpandableMap({ label, map }: { label: string; map: Record<string, stri
 }
 
 function NodeDetailContent({ clusterId, node }: { clusterId: string; node: NodeRow }) {
+  const [sorting, setSorting] = useState<SortingState>([])
   const { data: detail } = useNodeDetail(clusterId, node.name)
   const { data: events = [] } = useEvents(clusterId, { kind: 'nodes', name: node.name })
   const { data: pods = [] } = usePods(clusterId)
@@ -328,6 +330,9 @@ function NodeDetailContent({ clusterId, node }: { clusterId: string; node: NodeR
                 </div>
               ) : (
                 <DataTable
+                  enableSorting
+                  sorting={sorting}
+                  onSortingChange={setSorting}
                   data={podsOnNode}
                   columns={podTableColumns}
                   getRowId={podId}

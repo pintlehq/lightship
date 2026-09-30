@@ -4,11 +4,12 @@ import { Card } from '@renderer/ui/components/card'
 import type { ContextMenuItemDef } from '@renderer/ui/components/context-menu'
 import { DataTable } from '@renderer/ui/components/data-table'
 import { Icon } from '@renderer/ui/components/icon'
+import { byteValue, durationValue, readinessValue } from '@renderer/ui/lib/table-sorting'
 import { Input } from '@renderer/ui/components/input'
 import { MultiSelect, type MultiSelectOption } from '@renderer/ui/components/multi-select'
 import { toast } from '@renderer/ui/components/toaster'
 import { useQueryClient } from '@tanstack/react-query'
-import type { RowSelectionState } from '@tanstack/react-table'
+import type { RowSelectionState, SortingState } from '@tanstack/react-table'
 import {
   legacyCreateColumnHelper as createColumnHelper,
   type LegacyColumnDef as ColumnDef
@@ -56,6 +57,7 @@ export function ResourceListView({
   onOpenRow?: (row: ResourceRow) => void
   onOpenLogs?: (row: ResourceRow) => void
 }) {
+  const [sorting, setSorting] = useState<SortingState>([])
   const desc = RESOURCE_REGISTRY[resourceId]
   const loggable = canLogResource(resourceId)
   const restartable = canRestartResource(resourceId)
@@ -166,12 +168,26 @@ export function ResourceListView({
           id: rc.key,
           header: rc.header,
           size: 150,
-          meta: { align: rc.align, cellClassName: 'text-muted-foreground' }
+          meta: {
+            align: rc.align,
+            cellClassName: 'text-muted-foreground',
+            sortValue: (row) => {
+              const value = row.columns[rc.key] ?? ''
+              if (rc.key === 'ready' || rc.key === 'completions') return readinessValue(value)
+              if (rc.key === 'last schedule') return durationValue(value)
+              if (rc.key === 'capacity') return byteValue(value)
+              return value
+            }
+          }
         })
       )
     }
     cols.push(
-      col.accessor('age', { header: 'AGE', size: 90, meta: { cellClassName: 'text-faint' } })
+      col.accessor('age', {
+        header: 'AGE',
+        size: 90,
+        meta: { cellClassName: 'text-faint', sortValue: (row) => durationValue(row.age) }
+      })
     )
     // Trailing kebab actions column (rightmost).
     cols.push(
@@ -250,6 +266,7 @@ export function ResourceListView({
           <Button
             variant="outline"
             size="icon"
+            aria-label={`Refresh ${label.toLowerCase()}`}
             className="h-8 w-8"
             disabled={isFetching}
             onClick={() => {
@@ -286,6 +303,9 @@ export function ResourceListView({
           </div>
         ) : (
           <DataTable
+            enableSorting
+            sorting={sorting}
+            onSortingChange={setSorting}
             data={filtered}
             columns={columns}
             getRowId={(r) => r.uid}

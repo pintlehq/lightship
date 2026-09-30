@@ -1,7 +1,10 @@
+import { useState } from 'react'
+import type { SortingState } from '@tanstack/react-table'
 import { Button } from '@renderer/ui/components/button'
 import { Card } from '@renderer/ui/components/card'
 import { DataTable } from '@renderer/ui/components/data-table'
 import { Icon } from '@renderer/ui/components/icon'
+import { durationValue } from '@renderer/ui/lib/table-sorting'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   legacyCreateColumnHelper as createColumnHelper,
@@ -31,7 +34,7 @@ const columns: ColumnDef<HelmRelease, any>[] = [
     size: 160,
     meta: { cellClassName: 'text-muted-foreground' }
   }),
-  col.accessor((r) => String(r.revision), {
+  col.accessor('revision', {
     id: 'revision',
     header: 'REV',
     size: 70,
@@ -45,7 +48,11 @@ const columns: ColumnDef<HelmRelease, any>[] = [
   }),
   col.accessor('appVersion', { header: 'APP', size: 120, meta: { cellClassName: 'text-dim' } }),
   col.accessor('status', { header: 'STATUS', size: 130 }),
-  col.accessor('updated', { header: 'UPDATED', size: 90, meta: { cellClassName: 'text-faint' } })
+  col.accessor('updated', {
+    header: 'UPDATED',
+    size: 90,
+    meta: { cellClassName: 'text-faint', sortValue: (release) => durationValue(release.updated) }
+  })
 ]
 
 export function HelmView({
@@ -55,6 +62,7 @@ export function HelmView({
   clusterId: string
   onOpenRelease: (r: HelmRelease) => void
 }) {
+  const [sorting, setSorting] = useState<SortingState>([])
   const { data: rows = [], isLoading, isError, error } = useHelmReleases(clusterId)
   const qc = useQueryClient()
 
@@ -92,6 +100,9 @@ export function HelmView({
           </div>
         ) : (
           <DataTable
+            enableSorting
+            sorting={sorting}
+            onSortingChange={setSorting}
             data={rows}
             columns={columns}
             getRowId={(r) => `${r.namespace}/${r.name}`}

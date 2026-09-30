@@ -79,9 +79,11 @@
 
   --foreground: 9 9 11;
   --muted: 244 244 245;
-  --muted-foreground: 113 113 122;
+  --muted-foreground: 63 63 70;
   --dim: 82 82 91;
-  --faint: 161 161 170;
+  --faint: 100 100 110;
+  /* Neutral status indicators retain their decorative color independently of text contrast. */
+  --status-neutral: 161 161 170;
 
   --border: 228 228 231;
   --border-strong: 212 212 216;
@@ -132,9 +134,10 @@
 
   --foreground: 250 250 250;
   --muted: 34 34 38;
-  --muted-foreground: 161 161 170;
-  --dim: 113 113 122;
-  --faint: 82 82 91;
+  --muted-foreground: 194 194 204;
+  --dim: 174 174 184;
+  --faint: 154 154 164;
+  --status-neutral: 82 82 91;
 
   --border: 39 39 42;
   --border-strong: 63 63 70;
@@ -196,6 +199,7 @@
   --color-muted-foreground: rgb(var(--muted-foreground));
   --color-dim: rgb(var(--dim));
   --color-faint: rgb(var(--faint));
+  --color-status-neutral: rgb(var(--status-neutral));
 
   --color-border: rgb(var(--border));
   --color-border-strong: rgb(var(--border-strong));

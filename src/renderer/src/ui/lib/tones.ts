@@ -16,6 +16,6 @@ export const TONE_BG: Record<Tone, string> = {
   warning: 'bg-warning',
   destructive: 'bg-destructive',
   info: 'bg-info',
-  dim: 'bg-faint',
+  dim: 'bg-status-neutral',
   primary: 'bg-primary'
 }

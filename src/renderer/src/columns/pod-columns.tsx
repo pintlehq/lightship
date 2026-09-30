@@ -1,6 +1,7 @@
 import { legacyCreateColumnHelper as createColumnHelper } from '@tanstack/react-table/legacy'
 import { Dot } from '@renderer/ui/components/dot'
 import { cn } from '@renderer/ui/lib/utils'
+import { byteValue, cpuValue, durationValue } from '@renderer/ui/lib/table-sorting'
 import type { Tone } from '@renderer/ui/lib/types'
 import { TONE_BG, TONE_TEXT } from '@renderer/ui/lib/tones'
 
@@ -46,7 +47,9 @@ export const podColumns = [
   col.accessor('containers', {
     header: 'CONTAINER',
     size: 110,
-    enableSorting: false,
+    meta: {
+      sortValue: (pod) => [pod.containers.filter((c) => c.ready).length, pod.containers.length]
+    },
     cell: (c) => {
       const cs = c.getValue()
       const ready = cs.filter((x) => x.ready).length
@@ -79,12 +82,20 @@ export const podColumns = [
   col.accessor('cpu', {
     header: 'CPU',
     size: 80,
-    meta: { align: 'right', cellClassName: 'tabular-nums text-muted-foreground' }
+    meta: {
+      align: 'right',
+      cellClassName: 'tabular-nums text-muted-foreground',
+      sortValue: (pod) => cpuValue(pod.cpu)
+    }
   }),
   col.accessor('mem', {
     header: 'MEM',
     size: 80,
-    meta: { align: 'right', cellClassName: 'tabular-nums text-muted-foreground' }
+    meta: {
+      align: 'right',
+      cellClassName: 'tabular-nums text-muted-foreground',
+      sortValue: (pod) => byteValue(pod.mem)
+    }
   }),
   col.accessor('node', {
     header: 'NODE',
@@ -94,6 +105,6 @@ export const podColumns = [
   col.accessor('age', {
     header: 'AGE',
     size: 70,
-    meta: { cellClassName: 'text-faint' }
+    meta: { cellClassName: 'text-faint', sortValue: (pod) => durationValue(pod.age) }
   })
 ]

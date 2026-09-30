@@ -1,7 +1,10 @@
+import { useState } from 'react'
+import type { SortingState } from '@tanstack/react-table'
 import { Button } from '@renderer/ui/components/button'
 import { Card } from '@renderer/ui/components/card'
 import { DataTable } from '@renderer/ui/components/data-table'
 import { Icon } from '@renderer/ui/components/icon'
+import { durationValue } from '@renderer/ui/lib/table-sorting'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   legacyCreateColumnHelper as createColumnHelper,
@@ -21,7 +24,7 @@ const col = createColumnHelper<HelmRelease>()
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const columns: ColumnDef<HelmRelease, any>[] = [
-  col.accessor((r) => String(r.revision), {
+  col.accessor('revision', {
     id: 'revision',
     header: 'REVISION',
     size: 100,
@@ -35,7 +38,11 @@ const columns: ColumnDef<HelmRelease, any>[] = [
   }),
   col.accessor('appVersion', { header: 'APP', size: 120, meta: { cellClassName: 'text-dim' } }),
   col.accessor('status', { header: 'STATUS', size: 140 }),
-  col.accessor('updated', { header: 'UPDATED', size: 100, meta: { cellClassName: 'text-faint' } })
+  col.accessor('updated', {
+    header: 'UPDATED',
+    size: 100,
+    meta: { cellClassName: 'text-faint', sortValue: (release) => durationValue(release.updated) }
+  })
 ]
 
 export function HelmReleaseView({
@@ -49,6 +56,7 @@ export function HelmReleaseView({
   name: string
   label: string
 }) {
+  const [sorting, setSorting] = useState<SortingState>([])
   const {
     data: rows = [],
     isLoading,
@@ -92,6 +100,9 @@ export function HelmReleaseView({
           </div>
         ) : (
           <DataTable
+            enableSorting
+            sorting={sorting}
+            onSortingChange={setSorting}
             data={rows}
             columns={columns}
             getRowId={(r) => String(r.revision)}
