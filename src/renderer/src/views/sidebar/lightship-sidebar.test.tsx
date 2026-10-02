@@ -13,8 +13,11 @@ const cluster: ClusterMeta = {
   server: 'https://eks.example.test'
 }
 
+const secondCluster: ClusterMeta = { ...cluster, id: 'staging', name: 'Staging' }
+
 const mocks = vi.hoisted(() => ({
   test: vi.fn(),
+  useClusters: vi.fn<() => { data?: ClusterMeta[] }>(),
   toastError: vi.fn()
 }))
 
@@ -24,7 +27,7 @@ vi.mock('../../lib/ipc', () => ({
   hasBackend: () => true
 }))
 vi.mock('../../queries/clusters', () => ({
-  useClusters: () => ({ data: [cluster] }),
+  useClusters: mocks.useClusters,
   useRemoveCluster: () => ({ isPending: false, mutate: vi.fn() })
 }))
 vi.mock('@renderer/ui/components/toaster', () => ({
@@ -42,7 +45,7 @@ function deferred<T>() {
 function renderSidebar() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const onSelect = vi.fn()
-  render(
+  const view = () => (
     <QueryClientProvider client={qc}>
       <LightshipSidebar
         active=""
@@ -55,12 +58,75 @@ function renderSidebar() {
       />
     </QueryClientProvider>
   )
-  return { onSelect }
+  const result = render(view())
+  return {
+    onSelect,
+    unmount: result.unmount,
+    updateClusters: (clusters: ClusterMeta[]) => {
+      mocks.useClusters.mockReturnValue({ data: clusters })
+      result.rerender(view())
+    }
+  }
 }
 
 beforeEach(() => {
   mocks.test.mockReset()
+  mocks.useClusters.mockReset().mockReturnValue({ data: [cluster] })
   mocks.toastError.mockReset()
+})
+
+it.each([false, true])('starts with all clusters collapsed (delayed load: %s)', (delayed) => {
+  mocks.useClusters.mockReturnValue({ data: delayed ? undefined : [cluster, secondCluster] })
+  const { onSelect, updateClusters } = renderSidebar()
+
+  if (delayed) updateClusters([cluster, secondCluster])
+
+  expect(screen.getByText('GetLinks')).toBeInTheDocument()
+  expect(screen.getByText('Staging')).toBeInTheDocument()
+  expect(screen.queryByText('Overview')).not.toBeInTheDocument()
+  expect(screen.queryByText('Workloads')).not.toBeInTheDocument()
+  expect(mocks.test).not.toHaveBeenCalled()
+  expect(onSelect).not.toHaveBeenCalled()
+})
+
+it('preserves independent folds when clusters refresh or are added', async () => {
+  const user = userEvent.setup()
+  const { onSelect, updateClusters } = renderSidebar()
+  const toggle = (name: string) => within(screen.getByText(name).parentElement!).getByRole('button')
+
+  await user.click(toggle('GetLinks'))
+  expect(screen.getByText('Pods')).toBeInTheDocument()
+
+  updateClusters([{ ...cluster }, secondCluster])
+  expect(screen.getAllByText('Overview')).toHaveLength(1)
+  await user.click(screen.getByText('Overview'))
+  expect(onSelect).toHaveBeenLastCalledWith('getlinks', 'overview', 'Overview')
+
+  await user.click(toggle('Staging'))
+  expect(screen.getAllByText('Pods')).toHaveLength(2)
+  await user.click(toggle('GetLinks'))
+  updateClusters([{ ...secondCluster }, { ...cluster }])
+  expect(screen.getAllByText('Overview')).toHaveLength(1)
+  await user.click(screen.getByText('Overview'))
+  expect(onSelect).toHaveBeenLastCalledWith('staging', 'overview', 'Overview')
+
+  await user.click(toggle('Staging'))
+  updateClusters([{ ...cluster }, { ...secondCluster }])
+  expect(screen.queryByText('Overview')).not.toBeInTheDocument()
+  expect(mocks.test).not.toHaveBeenCalled()
+})
+
+it('starts collapsed again when the sidebar remounts', async () => {
+  const user = userEvent.setup()
+  const { unmount } = renderSidebar()
+  const header = screen.getByText('GetLinks').parentElement!
+  await user.click(within(header).getByRole('button'))
+  expect(screen.getByText('Overview')).toBeInTheDocument()
+
+  unmount()
+  renderSidebar()
+  expect(screen.queryByText('Overview')).not.toBeInTheDocument()
+  expect(mocks.test).not.toHaveBeenCalled()
 })
 
 it('expands and checks a cluster without opening a view, then reuses success', async () => {
@@ -69,9 +135,6 @@ it('expands and checks a cluster without opening a view, then reuses success', a
   mocks.test.mockReturnValue(check.promise)
   const { onSelect } = renderSidebar()
 
-  await screen.findByText('Overview')
-  const header = screen.getByText('GetLinks').parentElement!
-  await user.click(within(header).getByRole('button'))
   expect(screen.queryByText('Overview')).not.toBeInTheDocument()
 
   await user.click(screen.getByText('GetLinks'))

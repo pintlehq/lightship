@@ -11,6 +11,8 @@ files:
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
 asarUnpack:
   - resources/**
+  - node_modules/node-pty/**/spawn-helper
+afterPack: scripts/after-pack.mjs
 win:
   executableName: lightship
 nsis:

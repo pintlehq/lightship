@@ -39,6 +39,39 @@ test('packaged sandbox exposes only the curated bridge and delivers subscription
     )
     expect(sessionData).toBe(profile)
 
+    // Load the packaged native module, not the development dependency. A mocked
+    // spawn or a missing-cluster error cannot detect non-executable helpers.
+    const terminal = await app.evaluate(({ app: electronApp }) => {
+      const { createRequire } = process.getBuiltinModule('module')
+      const loadPackage = createRequire(`${electronApp.getAppPath()}/package.json`)
+      const pty: typeof import('node-pty') = loadPackage('node-pty')
+      return new Promise<{ output: string; exitCode: number }>((resolve, reject) => {
+        const home = electronApp.getPath('home')
+        const proc = pty.spawn('/bin/sh', ['-c', 'printf "lightship-pty-ok\\n"'], {
+          cols: 80,
+          rows: 24,
+          cwd: home,
+          env: { HOME: home, PATH: '/usr/bin:/bin', TERM: 'xterm-256color' }
+        })
+        let output = ''
+        const timeout = setTimeout(() => {
+          reject(new Error('Packaged terminal did not exit within 5 seconds'))
+          proc.kill()
+        }, 5_000)
+        const dataListener = proc.onData((data) => {
+          output += data
+        })
+        const exitListener = proc.onExit(({ exitCode }) => {
+          clearTimeout(timeout)
+          dataListener.dispose()
+          exitListener.dispose()
+          resolve({ output, exitCode })
+        })
+      })
+    })
+    expect(terminal.output).toContain('lightship-pty-ok')
+    expect(terminal.exitCode).toBe(0)
+
     const page = await app.firstWindow()
     await expect(page.locator('#root')).toBeVisible()
     expect(

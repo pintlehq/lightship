@@ -13,6 +13,12 @@ pnpm dev
 The project uses pnpm workspaces, electron-vite, React, TypeScript, Tailwind CSS, Vitest, and
 Playwright. Use Node.js `^20.19.0` or `>=22.12.0` for the current build toolchain.
 
+On macOS, setup, development startup, and builds run `pnpm prepare:pty` to ensure
+`node-pty`'s `spawn-helper` binaries are executable. This works around the missing execute bit
+in node-pty 1.1.0 that causes `posix_spawnp failed`. Packaging verifies the unpacked helpers
+again before signing; the installed app never repairs its own bundle. To repair an existing
+development install without restarting the dev server, run `pnpm prepare:pty` and open a new terminal.
+
 ## Repository layout
 
 | Path                    | Responsibility                                                                  |
@@ -125,3 +131,7 @@ pnpm build:linux
 The configured package targets are documented in [Getting started](getting-started.md#build-locally).
 The update URL is still a placeholder and macOS notarization is disabled, so packaging commands
 produce development artifacts rather than an official release.
+
+After `pnpm build:unpack` on Apple Silicon macOS, run `pnpm test:electron` to verify the packaged
+bridge and a real native terminal. The smoke test uses a temporary home and profile, runs a
+harmless local shell command, and does not load your kubeconfig or contact a Kubernetes cluster.

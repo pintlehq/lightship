@@ -11,8 +11,11 @@ export function sidebar(page: Page): Locator {
   return page.locator('aside').first()
 }
 
-/** Click a sidebar nav row by its (exact) label. */
+/** Expand the mock cluster before clicking a sidebar nav row by its exact label. */
 export async function navTo(page: Page, label: string): Promise<void> {
+  if (!(await sidebar(page).getByText('Overview', { exact: true }).isVisible())) {
+    await sidebar(page).getByText('e2e-cluster', { exact: true }).click()
+  }
   await sidebar(page).getByText(label, { exact: true }).click()
 }
 

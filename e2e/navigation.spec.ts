@@ -2,6 +2,26 @@ import { test, expect } from '@playwright/test'
 
 import { openApp, navTo, sidebar } from './helpers'
 
+test('starts with the cluster collapsed and resets its fold after reload', async ({ page }) => {
+  await openApp(page)
+  const tree = sidebar(page)
+  await expect(tree.getByText('Overview', { exact: true })).toHaveCount(0)
+  await expect(tree.getByText('Workloads', { exact: true })).toHaveCount(0)
+  await expect(tree.getByLabel('e2e-cluster: not checked', { exact: true })).toBeVisible()
+  await expect(page.getByText('No tab open · ⌘K to search')).toBeVisible()
+
+  await tree.getByText('e2e-cluster', { exact: true }).click()
+  await expect(tree.getByText('Overview', { exact: true })).toBeVisible()
+  await expect(tree.getByText('Pods', { exact: true })).toBeVisible()
+  await expect(page.getByText('No tab open · ⌘K to search')).toBeVisible()
+
+  await page.reload()
+  await expect(tree.getByText('e2e-cluster', { exact: true })).toBeVisible()
+  await expect(tree.getByText('Overview', { exact: true })).toHaveCount(0)
+  await expect(tree.getByText('Workloads', { exact: true })).toHaveCount(0)
+  await expect(tree.getByLabel('e2e-cluster: not checked', { exact: true })).toBeVisible()
+})
+
 test('navigate Overview / Nodes / Pods and open tabs', async ({ page }) => {
   await openApp(page)
 

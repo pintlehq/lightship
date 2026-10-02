@@ -38,6 +38,13 @@ export default defineConfig(
     }
   },
   {
+    files: ['scripts/**/*.mjs'],
+    rules: {
+      // Native Node scripts use JSDoc checked by TypeScript, not TS return syntax.
+      '@typescript-eslint/explicit-function-return-type': 'off'
+    }
+  },
+  {
     files: ['**/*.test.{ts,tsx}', '**/test/setup.ts'],
     rules: {
       '@typescript-eslint/no-require-imports': 'off',

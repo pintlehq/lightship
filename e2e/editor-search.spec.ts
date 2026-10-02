@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-import { navTo, openApp, sidebar } from './helpers'
+import { navTo, openApp } from './helpers'
 
 test('resource YAML uses the inline find bar with keyboard navigation', async ({ page }) => {
   await openApp(page)
@@ -65,7 +65,7 @@ test('find and replace fit in a narrow YAML creation dialog', async ({ page }) =
 
 test('Secret search is available only while a value is revealed', async ({ page }) => {
   await openApp(page)
-  await sidebar(page).getByText('Config', { exact: true }).click()
+  await navTo(page, 'Config')
   await navTo(page, 'Secrets')
   await page.locator('tbody tr').first().click()
   await page.getByRole('button', { name: 'Data' }).click()

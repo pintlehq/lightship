@@ -5,7 +5,7 @@ import { Icon } from '@renderer/ui/components/icon'
 import { toast } from '@renderer/ui/components/toaster'
 import { Sidebar, TreeRow } from '@renderer/ui/shell/sidebar'
 import { useQueryClient } from '@tanstack/react-query'
-import { Fragment, useEffect, useRef, useState } from 'react'
+import { Fragment, useState } from 'react'
 
 import type { ClusterMeta } from '../../../../shared/ipc-types'
 import { LIGHTSHIP_TREE } from '../../data/static'
@@ -81,7 +81,7 @@ export function LightshipSidebar({
   }
 
   // Which cluster trees are expanded — independent of any active tab, so multiple
-  // can be open at once. Seeded to the first cluster on first load (below).
+  // can be open at once. All start collapsed until the user expands them.
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
   const toggleCluster = (id: string) =>
     setExpanded((s) => {
@@ -119,15 +119,6 @@ export function LightshipSidebar({
       .invalidateQueries({ predicate: (q) => q.queryKey[1] === cl.id })
       .then(() => toast.success(`Refreshed ${cl.name}`))
   }
-
-  // Expand the first cluster's tree once, when clusters first load, so the sidebar
-  // isn't a wall of collapsed nodes. The user can expand/collapse any others freely.
-  const seeded = useRef(false)
-  useEffect(() => {
-    if (seeded.current || clusters.length === 0) return
-    seeded.current = true
-    setExpanded(new Set([clusters[0].id]))
-  }, [clusters])
 
   const renderNode = (n: LightshipTreeNode, depth: number, clusterId: string) => {
     // The Custom Resources section is dynamic (CRDs grouped by API group), so it
