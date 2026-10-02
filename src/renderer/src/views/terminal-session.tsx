@@ -27,6 +27,19 @@ function xtermTheme(isDark: boolean) {
   }
 }
 
+function fitVisibleTerminal(host: HTMLDivElement, fit: FitAddon): boolean {
+  // Hidden tabs have no usable dimensions; fitting them can collapse the PTY to
+  // one row and reflow its scrollback before the tab becomes visible again.
+  if (host.clientWidth === 0 || host.clientHeight === 0) return false
+  try {
+    fit.fit()
+    return true
+  } catch {
+    // xterm may not have measured its cells yet; retry on resize/activation.
+    return false
+  }
+}
+
 /** One xterm.js terminal bound to one pty session. Stays mounted while inactive
  *  (keeps its scrollback); refits when it becomes the active tab. */
 export function TerminalSession({
@@ -43,6 +56,8 @@ export function TerminalSession({
   const handleRef = useRef<TerminalHandle | null>(null)
 
   useEffect(() => {
+    const host = ref.current
+    if (!host) return
     const term = new Terminal({
       fontFamily: '"JetBrains Mono Variable", ui-monospace, monospace',
       fontSize: 12,
@@ -51,17 +66,14 @@ export function TerminalSession({
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
-    term.open(ref.current!)
-    try {
-      fit.fit()
-    } catch {
-      /* container not measurable yet */
-    }
+    term.open(host)
+    fitVisibleTerminal(host, fit)
     termRef.current = term
     fitRef.current = fit
 
+    let handle: TerminalHandle | null = null
     if (hasBackend()) {
-      const handle = clusterApi.openTerminal(
+      handle = clusterApi.openTerminal(
         session.clusterId,
         {
           cols: term.cols,
@@ -78,24 +90,25 @@ export function TerminalSession({
         }
       )
       handleRef.current = handle
-      term.onData((d) => handle.write(d))
+      term.onData((d) => handle?.write(d))
     } else {
       term.writeln('\x1b[2mTerminal requires the desktop app (no backend in browser).\x1b[0m')
     }
 
+    let disposed = false
     const ro = new ResizeObserver(() => {
-      try {
-        fit.fit()
-      } catch {
-        /* hidden */
-      }
-      handleRef.current?.resize(term.cols, term.rows)
+      if (disposed || !fitVisibleTerminal(host, fit)) return
+      handle?.resize(term.cols, term.rows)
     })
-    if (ref.current) ro.observe(ref.current)
+    ro.observe(host)
 
     return () => {
+      disposed = true
       ro.disconnect()
-      void handleRef.current?.kill().catch((error: unknown) => {
+      termRef.current = null
+      fitRef.current = null
+      handleRef.current = null
+      void handle?.kill().catch((error: unknown) => {
         toast.error('Failed to stop terminal', errMsg(error))
       })
       term.dispose()
@@ -111,19 +124,21 @@ export function TerminalSession({
   // A hidden terminal can't measure; refit + refocus when it becomes active.
   useEffect(() => {
     if (!active) return
-    requestAnimationFrame(() => {
-      try {
-        fitRef.current?.fit()
-      } catch {
-        /* not measurable */
-      }
+    const frame = requestAnimationFrame(() => {
+      const host = ref.current
+      const fit = fitRef.current
       const term = termRef.current
-      if (term) {
-        handleRef.current?.resize(term.cols, term.rows)
-        term.focus()
-      }
+      if (!host || !fit || !term || !fitVisibleTerminal(host, fit)) return
+      handleRef.current?.resize(term.cols, term.rows)
+      term.focus()
     })
+    return () => cancelAnimationFrame(frame)
   }, [active])
 
-  return <div ref={ref} className="h-full w-full p-2" />
+  // FitAddon measures its parent's full height, so keep padding outside that host.
+  return (
+    <div className="h-full w-full overflow-hidden p-2">
+      <div ref={ref} className="h-full w-full" />
+    </div>
+  )
 }
