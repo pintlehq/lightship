@@ -9,7 +9,15 @@ The app never reads kubeconfig, connects to clusters, runs shells or persists da
 Resource lists support case-insensitive search, namespace filtering, typed sorting,
 checkbox selection, column resizing, row details and copying resource names.
 Refresh reloads the same fixtures, retains filters/selection and records an Output
-entry. New from YAML explains the demo boundary; it does not create resources.
+entry. Selecting one or more rows shows a floating bulk action bar. Selection
+includes filtered-out rows, whose count is shown explicitly. Delete is offered
+for all resource pages except Overview; Deployments and StatefulSets also offer
+Scale and Rolling restart, and DaemonSets offer Rolling restart. Narrow panes
+collapse additional actions into More. The dialogs snapshot selected targets;
+Scale accepts integer replicas from 0 through 2,147,483,647. Confirmation only
+records a Demo simulation in Output: no fixtures change. Cancel keeps selection,
+and × or Escape in the table/action bar clears it. Checkbox clicks never inspect
+a row. New from YAML explains the demo boundary; it does not create resources.
 
 Each document retains its filter, sort, selection and scrolling. Splits create an
 independent view of the same fixture source. The initial page is Development /
@@ -47,10 +55,12 @@ committed Git-pinned lockfile before submitting application-only changes.
 
 ## Validation
 
-On macOS, the published kit pin passes all 8 Lightship tests, strict all-target
+On macOS, the published kit pin passes all 13 Lightship tests, strict all-target
 Clippy and an independent locked build. Coverage includes all 78 resource pages,
 fixture identity and totals, namespace/search filtering, numeric sorting,
 checkbox selection, refresh, demo dialog, details, palette, preview/permanent
-and split tabs, retained scrolling, panel focus and resize state. Rendered checks
+and split tabs, retained scrolling, panel focus and resize state. Bulk coverage
+includes capability rules, hidden selections, snapshot targets, validation,
+keyboard activation, focus restoration, fixture integrity and narrow panes. Rendered checks
 cover light/dark at 1440 × 900 and 1024 × 680; native smoke checks cover both
 appearances, compact resizing, namespace menus and row inspection.

@@ -8,7 +8,7 @@ repository = "https://github.com/pintlehq/lightship"
 publish = false
 
 [dependencies]
-pintle-gpui-kit = { git = "https://github.com/pintlehq/pintle-gpui-kit", rev = "7fcd244e5ad268eef0146e3b3307d508abbceeaf", features = ["shell", "assets"] }
+pintle-gpui-kit = { git = "https://github.com/pintlehq/pintle-gpui-kit", rev = "c8a4c6d1cc6c5ff57f8fa9b9ee4d7ef67d459612", features = ["shell", "assets"] }
 
 [dev-dependencies]
 gpui-kit = { version = "=0.8.1", default-features = false, features = ["test-support", "component", "assets"] }

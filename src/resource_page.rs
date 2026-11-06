@@ -1,4 +1,6 @@
+use crate::bulk::{BulkAction, BulkDialog};
 use crate::catalog::{self, Resource, Row};
+use gpui::base::ElementExt;
 use gpui::component::{
     ActiveTheme, IconName, Sizable, WindowExt,
     button::{Button, ButtonVariants},
@@ -9,7 +11,7 @@ use gpui::component::{
 };
 use gpui::{prelude::*, *};
 use pintle_gpui_kit::{
-    components::resource_table::{ResourceListHeader, ResourceTable},
+    components::resource_table::{FloatingActionBar, ResourceListHeader, ResourceTable},
     kit as gpui,
     shell::workspace::Document,
 };
@@ -20,6 +22,8 @@ pub struct PanelState {
     pub details: String,
     pub output: Vec<String>,
 }
+pub struct ShowOutput;
+impl EventEmitter<ShowOutput> for PanelState {}
 pub struct Inspect;
 impl EventEmitter<Inspect> for PanelState {}
 impl PanelState {
@@ -39,6 +43,7 @@ impl PanelState {
         cx.notify();
     }
 }
+#[derive(Clone)]
 pub struct Rows {
     pub cluster: String,
     pub resource: Resource,
@@ -48,7 +53,7 @@ pub struct Rows {
     pub namespace: Option<String>,
     pub selected: HashSet<String>,
     pub sort: Option<(usize, ColumnSort)>,
-    panel: Entity<PanelState>,
+    pub(crate) panel: Entity<PanelState>,
 }
 impl Rows {
     pub fn new(cluster: String, resource: Resource, panel: Entity<PanelState>) -> Self {
@@ -103,6 +108,14 @@ impl Rows {
             });
         }
     }
+    pub fn hidden_selected_count(&self) -> usize {
+        self.selected.len()
+            - self
+                .visible
+                .iter()
+                .filter(|i| self.selected.contains(&self.rows[**i].id))
+                .count()
+    }
     pub fn selection_state(&self) -> (bool, bool) {
         let count = self
             .visible
@@ -141,7 +154,11 @@ impl TableDelegate for Rows {
     fn column(&self, col: usize, _: &App) -> Column {
         if col == 0 {
             return Column::new("select", "")
-                .width(px(44.))
+                .width(px(if self.resource.key == "overview" {
+                    0.
+                } else {
+                    44.
+                }))
                 .resizable(false)
                 .movable(false);
         }
@@ -196,6 +213,9 @@ impl TableDelegate for Rows {
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
         if col == 0 {
+            if self.resource.key == "overview" {
+                return div().into_any_element();
+            }
             let (all, mixed) = self.selection_state();
             let owner = cx.weak_entity();
             return gpui::base::Checkbox::new("select-visible")
@@ -226,6 +246,7 @@ impl TableDelegate for Rows {
                         }),
                 )
                 .on_change(move |state, _, _, cx| {
+                    cx.stop_propagation();
                     let _ = owner.update(cx, |table, cx| {
                         table
                             .delegate_mut()
@@ -240,6 +261,20 @@ impl TableDelegate for Rows {
             .child(self.column(col, cx).name)
             .into_any_element()
     }
+    fn render_tr(
+        &mut self,
+        row: usize,
+        _: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) -> Stateful<Div> {
+        let selected = self
+            .visible
+            .get(row)
+            .is_some_and(|i| self.selected.contains(&self.rows[*i].id));
+        div()
+            .id(("resource-row", row))
+            .when(selected, |row| row.bg(cx.theme().accent))
+    }
     fn render_td(
         &mut self,
         row: usize,
@@ -249,6 +284,9 @@ impl TableDelegate for Rows {
     ) -> impl IntoElement {
         let record = self.rows[self.visible[row]].clone();
         if col == 0 {
+            if self.resource.key == "overview" {
+                return div().into_any_element();
+            }
             let id = record.id.clone();
             let owner = cx.weak_entity();
             return div()
@@ -264,6 +302,7 @@ impl TableDelegate for Rows {
                         .checked(self.selected.contains(&id))
                         .accessibility_label(format!("Select {}", record.name))
                         .on_change(move |checked, _, cx| {
+                            cx.stop_propagation();
                             let _ = owner.update(cx, |table, cx| {
                                 let rows = table.delegate_mut();
                                 if *checked {
@@ -358,6 +397,9 @@ impl TableDelegate for Rows {
 pub struct ResourcePage {
     pub table: Entity<TableState<Rows>>,
     pub filter: Entity<InputState>,
+    pub compact_actions: bool,
+    action_focus: [FocusHandle; 5],
+    pub bulk_dialog: Option<Entity<BulkDialog>>,
     _subscriptions: Vec<Subscription>,
 }
 impl ResourcePage {
@@ -405,8 +447,162 @@ impl ResourcePage {
         Self {
             table,
             filter,
+            compact_actions: false,
+            action_focus: std::array::from_fn(|_| cx.focus_handle()),
+            bulk_dialog: None,
             _subscriptions: vec![changed, selected, observe],
         }
+    }
+    pub fn clear_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.table.update(cx, |table, cx| {
+            table.delegate_mut().selected.clear();
+            cx.notify();
+        });
+        self.table.focus_handle(cx).focus(window, cx);
+    }
+    pub fn open_bulk(&mut self, action: BulkAction, window: &mut Window, cx: &mut Context<Self>) {
+        let rows = self.table.read(cx).delegate().clone();
+        if rows.selected.is_empty() || !BulkAction::for_resource(rows.resource).contains(&action) {
+            return;
+        }
+        let index = if self.compact_actions && action != BulkAction::Delete {
+            3
+        } else {
+            action as usize
+        };
+        let origin = self.action_focus[index].clone();
+        origin.focus(window, cx);
+        let owner = cx.weak_entity();
+        let dialog = cx.new(|cx| {
+            BulkDialog::new(
+                action,
+                &rows,
+                move |window, cx| {
+                    let _ = owner.update(cx, |page, cx| {
+                        let rows = page.table.read(cx).delegate();
+                        if rows.selected.is_empty()
+                            || (index != 0 && page.compact_actions != (index == 3))
+                        {
+                            page.table.focus_handle(cx).focus(window, cx);
+                        } else {
+                            origin.focus(window, cx);
+                        }
+                    });
+                },
+                window,
+                cx,
+            )
+        });
+        self.bulk_dialog = Some(dialog.clone());
+        window.open_dialog(cx, move |surface, _, _| {
+            let confirm = dialog.clone();
+            let restore = dialog.clone();
+            surface
+                .title(format!("{} · Demo", action.label()))
+                .width(px(540.))
+                .child(dialog.clone())
+                .on_ok(move |_, _, cx| confirm.update(cx, |dialog, cx| dialog.confirm(cx)))
+                .on_close(move |_, window, cx| {
+                    restore.update(cx, |dialog, cx| dialog.restore_focus(window, cx))
+                })
+        });
+    }
+    fn bulk_button(&self, action: BulkAction, cx: &Context<Self>) -> Button {
+        Button::new(action.id())
+            .label(action.label())
+            .icon(match action {
+                BulkAction::Delete => gpui::assets::IconName::Trash,
+                BulkAction::Scale => gpui::assets::IconName::ChevronsUpDown,
+                BulkAction::Restart => gpui::assets::IconName::RefreshCw,
+            })
+            .small()
+            .ghost()
+            .track_focus(&self.action_focus[action as usize])
+            .when(action == BulkAction::Delete, |button| {
+                button
+                    .outline()
+                    .text_color(cx.theme().danger)
+                    .border_color(cx.theme().danger.opacity(0.5))
+            })
+            .on_click(cx.listener(move |page, _, window, cx| page.open_bulk(action, window, cx)))
+    }
+    fn bulk_bar(&self, cx: &Context<Self>) -> impl IntoElement {
+        let rows = self.table.read(cx).delegate();
+        let count = rows.selected.len();
+        let hidden = rows.hidden_selected_count();
+        let actions = BulkAction::for_resource(rows.resource);
+        let owner = cx.weak_entity();
+        let summary = format!(
+            "{count} selected{}",
+            if hidden > 0 {
+                format!(" · {hidden} hidden by filters")
+            } else {
+                String::new()
+            }
+        );
+        FloatingActionBar::new(
+            div()
+                .id("bulk-selection-summary")
+                .test_support()
+                .aria_label(summary)
+                .flex()
+                .flex_col()
+                .min_w_0()
+                .text_size(px(12.))
+                .child(div().truncate().child(format!("{count} selected")))
+                .when(hidden > 0, |d| {
+                    d.child(
+                        div()
+                            .truncate()
+                            .text_size(px(10.))
+                            .text_color(cx.theme().muted_foreground)
+                            .child(format!("{hidden} hidden by filters")),
+                    )
+                }),
+            div()
+                .flex()
+                .items_center()
+                .gap_1()
+                .flex_shrink_0()
+                .child(self.bulk_button(BulkAction::Delete, cx))
+                .when(!self.compact_actions, |bar| {
+                    bar.children(
+                        actions
+                            .iter()
+                            .skip(1)
+                            .map(|action| self.bulk_button(*action, cx)),
+                    )
+                })
+                .when(self.compact_actions && actions.len() > 1, |bar| {
+                    bar.child(
+                        Button::new("bulk-more")
+                            .label("More")
+                            .small()
+                            .ghost()
+                            .track_focus(&self.action_focus[3])
+                            .dropdown_menu(move |mut menu, _, _| {
+                                for action in actions.iter().copied().skip(1) {
+                                    let owner = owner.clone();
+                                    menu = menu.item(PopupMenuItem::new(action.label()).on_click(
+                                        move |_, window, cx| {
+                                            let _ = owner.update(cx, |page, cx| {
+                                                page.open_bulk(action, window, cx)
+                                            });
+                                        },
+                                    ));
+                                }
+                                menu
+                            }),
+                    )
+                }),
+            Button::new("bulk-clear")
+                .icon(IconName::Close)
+                .small()
+                .ghost()
+                .track_focus(&self.action_focus[4])
+                .accessibility_label("Clear selection")
+                .on_click(cx.listener(|page, _, window, cx| page.clear_selection(window, cx))),
+        )
     }
     pub fn set_namespace(&mut self, namespace: Option<String>, cx: &mut Context<Self>) {
         self.table.update(cx, |table, cx| {
@@ -443,6 +639,9 @@ impl Render for ResourcePage {
         let title = format!("{} / {}", rows.cluster, resource.title);
         let count = format!("{} items · Demo data", rows.visible.len());
         let namespace = rows.namespace.as_deref().unwrap_or("all").to_owned();
+        let selected = !rows.selected.is_empty() && resource.key != "overview";
+        let measure = cx.weak_entity();
+        let compact = self.compact_actions;
         let owner = cx.weak_entity();
         let filter = Input::new(&self.filter)
             .id("table-filter")
@@ -503,6 +702,32 @@ impl Render for ResourcePage {
         div()
             .id(("resource-page", cx.entity_id()))
             .test_support()
+            .on_prepaint(move |bounds, window, cx| {
+                let next = bounds.size.width < px(560.);
+                if next != compact {
+                    let measure = measure.clone();
+                    window.defer(cx, move |_, cx| {
+                        let _ = measure.update(cx, |page, cx| {
+                            page.compact_actions = next;
+                            cx.notify();
+                        });
+                    });
+                }
+            })
+            .on_key_down(cx.listener(|page, event: &KeyDownEvent, window, cx| {
+                if event.keystroke.key == "escape"
+                    && !window.has_active_dialog(cx)
+                    && (page.table.focus_handle(cx).contains_focused(window, cx)
+                        || page
+                            .action_focus
+                            .iter()
+                            .any(|focus| focus.is_focused(window)))
+                    && !page.table.read(cx).delegate().selected.is_empty()
+                {
+                    page.clear_selection(window, cx);
+                    cx.stop_propagation();
+                }
+            }))
             .size_full()
             .min_w_0()
             .min_h_0()
@@ -529,11 +754,10 @@ impl Render for ResourcePage {
                 toolbar,
             ))
             .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .min_w_0()
-                    .child(ResourceTable::new(&self.table)),
+                div().flex_1().min_h_0().min_w_0().child(
+                    ResourceTable::new(&self.table)
+                        .when(selected, |table| table.floating_actions(self.bulk_bar(cx))),
+                ),
             )
     }
 }

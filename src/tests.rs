@@ -415,3 +415,280 @@ fn table_scrolling_sort_controls_and_tab_state(cx: &mut TestAppContext) {
         );
     });
 }
+
+#[test]
+fn bulk_capabilities_and_replica_validation() {
+    use bulk::{BulkAction::*, parse_replicas};
+    for resource in catalog::RESOURCES {
+        let expected: &[bulk::BulkAction] = match resource.key {
+            "overview" => &[],
+            "deployments" | "statefulsets" => &[Delete, Scale, Restart],
+            "daemonsets" => &[Delete, Restart],
+            _ => &[Delete],
+        };
+        assert_eq!(bulk::BulkAction::for_resource(*resource), expected);
+    }
+    for (text, expected) in [
+        ("0", Some(0)),
+        ("1", Some(1)),
+        ("2147483647", Some(i32::MAX)),
+        ("2147483648", None),
+        ("-1", None),
+        ("+1", None),
+        ("1.5", None),
+        ("", None),
+        (" ", None),
+        ("x", None),
+    ] {
+        assert_eq!(parse_replicas(text), expected, "{text}");
+    }
+}
+
+#[gpui_kit::test]
+fn bulk_selection_hidden_rows_cancel_and_escape(cx: &mut TestAppContext) {
+    let (handle, app) = open(cx);
+    let page = cx.update(|cx| active_page(&app, cx));
+    step(cx, handle, |window, cx| {
+        assert!(window.find_all("floating-action-bar").is_empty());
+        window.click("select:Development/deployments/development-api-01", cx);
+    });
+    step(cx, handle, |window, cx| {
+        assert!(
+            !app.read(cx).layout.read(cx).panel_visible,
+            "checkbox must not inspect the row"
+        );
+        assert_eq!(
+            window.find("bulk-selection-summary").label(),
+            Some("1 selected")
+        );
+        window.click("select:Development/deployments/development-web-02", cx);
+    });
+    step(cx, handle, |window, cx| {
+        page.update(cx, |page, cx| {
+            page.set_namespace(Some("default".into()), cx)
+        });
+        page.read(cx).filter.clone().update(cx, |input, cx| {
+            input.set_value("no-such-resource", window, cx);
+            cx.emit(gpui::component::input::InputEvent::Change);
+        });
+    });
+    step(cx, handle, |window, cx| {
+        assert_eq!(
+            window.find("bulk-selection-summary").label(),
+            Some("2 selected · 2 hidden by filters")
+        );
+        assert!(window.find("no-results").visible());
+        window.click("refresh-resources", cx);
+    });
+    step(cx, handle, |window, cx| {
+        assert_eq!(page.read(cx).table.read(cx).delegate().selected.len(), 2);
+        window.click("bulk-delete", cx);
+    });
+    step(cx, handle, |window, cx| {
+        let dialog = page.read(cx).bulk_dialog.as_ref().unwrap().read(cx);
+        assert_eq!(dialog.targets.len(), 2);
+        assert_eq!(dialog.hidden, 2);
+        assert!(window.has_active_dialog(cx));
+        window.press("escape", cx);
+    });
+    step(cx, handle, |window, cx| {
+        assert!(!window.has_active_dialog(cx));
+        assert_eq!(page.read(cx).table.read(cx).delegate().selected.len(), 2);
+        assert_eq!(app.read(cx).panel_state.read(cx).output.len(), 1); // Refresh only.
+        window.click("command-search", cx);
+    });
+    step(cx, handle, |window, cx| {
+        assert!(window.has_active_dialog(cx));
+        window.press("escape", cx);
+    });
+    step(cx, handle, |window, cx| {
+        assert_eq!(page.read(cx).table.read(cx).delegate().selected.len(), 2);
+        page.focus_handle(cx).focus(window, cx);
+        window.press("escape", cx);
+    });
+    step(cx, handle, |window, cx| {
+        assert!(window.find_all("floating-action-bar").is_empty());
+        assert!(page.read(cx).table.read(cx).delegate().selected.is_empty());
+        assert_eq!(window.focused(cx), Some(page.focus_handle(cx)));
+    });
+}
+
+#[gpui_kit::test]
+fn bulk_scale_snapshot_output_and_fixture_integrity(cx: &mut TestAppContext) {
+    let (handle, app) = open(cx);
+    let page = cx.update(|cx| active_page(&app, cx));
+    let fixtures = cx.update(|cx| page.read(cx).table.read(cx).delegate().rows.clone());
+    step(cx, handle, |window, cx| window.click("select-visible", cx));
+    step(cx, handle, |window, cx| window.click("bulk-scale", cx));
+    let dialog = cx.update(|cx| page.read(cx).bulk_dialog.clone().unwrap());
+    step(cx, handle, |window, cx| {
+        assert_eq!(dialog.read(cx).targets, fixtures);
+        dialog.read(cx).replicas.clone().update(cx, |input, cx| {
+            input.set_value("-1", window, cx);
+            cx.emit(gpui::component::input::InputEvent::Change);
+        });
+    });
+    step(cx, handle, |window, cx| {
+        assert!(window.find("bulk-replicas-error").visible());
+        window.click("bulk-confirm", cx);
+        window.press("enter", cx);
+        assert!(window.has_active_dialog(cx));
+        assert!(app.read(cx).panel_state.read(cx).output.is_empty());
+        dialog.read(cx).replicas.clone().update(cx, |input, cx| {
+            input.set_value("0", window, cx);
+            cx.emit(gpui::component::input::InputEvent::Change);
+        });
+        // A changed selection must not rewrite an already-open command's targets.
+        page.read(cx).table.clone().update(cx, |table, cx| {
+            let id = table.delegate().rows[0].id.clone();
+            table.delegate_mut().selected.remove(&id);
+            cx.notify();
+        });
+    });
+    step(cx, handle, |window, cx| window.click("bulk-confirm", cx));
+    step(cx, handle, |window, cx| {
+        assert!(!window.has_active_dialog(cx));
+        let panel = app.read(cx).panel_state.read(cx);
+        assert_eq!(panel.output.len(), 1);
+        assert!(panel.output[0].contains("29 selected"));
+        assert!(panel.output[0].contains("replicas=0"));
+        assert!(panel.output[0].contains("default/development-api-01"));
+        assert!(panel.output[0].contains("No resources were changed."));
+        assert_eq!(app.read(cx).panel_tab, 1);
+        assert!(app.read(cx).layout.read(cx).panel_visible);
+        assert_eq!(page.read(cx).table.read(cx).delegate().rows, fixtures);
+        assert_eq!(page.read(cx).table.read(cx).delegate().selected.len(), 28);
+        window.press("escape", cx);
+    });
+    step(cx, handle, |_, cx| {
+        assert!(page.read(cx).table.read(cx).delegate().selected.is_empty())
+    });
+}
+
+#[gpui_kit::test]
+fn bulk_responsive_bar_split_and_overview(cx: &mut TestAppContext) {
+    let (handle, app) = open(cx);
+    let page = cx.update(|cx| active_page(&app, cx));
+    let workspace = cx.update(|cx| app.read(cx).workspace.clone());
+    step(cx, handle, |window, cx| window.click("select-visible", cx));
+    for dimensions in [size(px(1440.), px(900.)), size(px(1024.), px(680.))] {
+        cx.simulate_window_resize(handle, dimensions);
+        for mode in [theme::ThemeMode::Light, theme::ThemeMode::Dark] {
+            cx.update(|cx| theme::set_mode(mode, cx));
+            step(cx, handle, |_, _| {});
+            step(cx, handle, |window, cx| {
+                let bar = window.find("floating-action-bar").bounds();
+                assert!(bar.left() >= px(0.) && bar.right() <= dimensions.width);
+                page.read(cx).table.clone().update(cx, |table, cx| {
+                    table.scroll_to_row(28, cx);
+                    table.scroll_to_col(6, cx);
+                });
+            });
+            step(cx, handle, |window, _| {
+                let bar = window.find("floating-action-bar").bounds();
+                let last = window.find(("resource-row", 28usize)).bounds();
+                assert!(last.bottom() <= bar.top(), "last row remains above actions");
+            });
+        }
+    }
+    step(cx, handle, |window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            let view = workspace.active_view(cx).unwrap();
+            workspace.split(view, SplitDirection::Right, window, cx);
+        });
+    });
+    step(cx, handle, |_, _| {});
+    step(cx, handle, |window, cx| {
+        assert!(page.read(cx).compact_actions);
+        assert_eq!(window.find_all("floating-action-bar").len(), 1);
+        assert!(window.find("bulk-more").visible());
+        let split = active_page(&app, cx);
+        assert_ne!(split.entity_id(), page.entity_id());
+        assert!(split.read(cx).table.read(cx).delegate().selected.is_empty());
+        workspace.update(cx, |workspace, cx| {
+            workspace.open(
+                catalog::RESOURCES[0].document("Development"),
+                OpenMode::Permanent,
+                window,
+                cx,
+            );
+        });
+    });
+    step(cx, handle, |_, cx| {
+        let overview = active_page(&app, cx);
+        assert_eq!(
+            overview.read(cx).table.read(cx).delegate().resource.key,
+            "overview"
+        );
+        overview.update(cx, |page, cx| {
+            page.table.update(cx, |table, cx| {
+                table.delegate_mut().select_visible(true);
+                cx.notify();
+            });
+        });
+    });
+    step(cx, handle, |window, _| {
+        assert_eq!(window.find_all("floating-action-bar").len(), 1)
+    });
+}
+
+#[gpui_kit::test]
+fn bulk_keyboard_simulation_cancel_and_focus_fallback(cx: &mut TestAppContext) {
+    let (handle, app) = open(cx);
+    let page = cx.update(|cx| active_page(&app, cx));
+    let fixtures = cx.update(|cx| page.read(cx).table.read(cx).delegate().rows.clone());
+    step(cx, handle, |window, cx| window.click("select-visible", cx));
+    step(cx, handle, |window, cx| window.click("bulk-delete", cx));
+    step(cx, handle, |window, cx| window.click("bulk-cancel", cx));
+    step(cx, handle, |window, cx| {
+        assert!(!window.has_active_dialog(cx));
+        assert!(app.read(cx).panel_state.read(cx).output.is_empty());
+        window.press("enter", cx); // Restored focus activates Delete.
+    });
+    step(cx, handle, |window, cx| {
+        assert!(window.has_active_dialog(cx));
+        window.click("bulk-confirm", cx);
+    });
+    step(cx, handle, |window, cx| {
+        assert_eq!(app.read(cx).panel_state.read(cx).output.len(), 1);
+        window.press("space", cx); // Space also activates the restored button.
+    });
+    step(cx, handle, |window, cx| {
+        assert!(window.has_active_dialog(cx));
+        window.press("escape", cx);
+    });
+    step(cx, handle, |window, cx| {
+        window.press("tab", cx);
+        window.press("enter", cx); // Next action is Scale.
+    });
+    step(cx, handle, |window, cx| {
+        assert!(window.has_active_dialog(cx));
+        assert_eq!(
+            page.read(cx).bulk_dialog.as_ref().unwrap().read(cx).action,
+            bulk::BulkAction::Scale
+        );
+        window.press("escape", cx);
+    });
+    step(cx, handle, |window, cx| window.click("bulk-restart", cx));
+    step(cx, handle, |window, cx| window.press("enter", cx));
+    step(cx, handle, |window, cx| {
+        assert!(!window.has_active_dialog(cx));
+        let output = &app.read(cx).panel_state.read(cx).output;
+        assert_eq!(output.len(), 2);
+        assert!(output[0].contains("Delete"));
+        assert!(output[1].contains("Rolling restart"));
+        assert_eq!(page.read(cx).table.read(cx).delegate().rows, fixtures);
+        window.click("bulk-delete", cx);
+    });
+    step(cx, handle, |window, cx| {
+        page.read(cx).table.clone().update(cx, |table, cx| {
+            table.delegate_mut().selected.clear();
+            cx.notify();
+        });
+        window.press("escape", cx);
+    });
+    step(cx, handle, |window, cx| {
+        assert_eq!(window.focused(cx), Some(page.focus_handle(cx)));
+        assert!(window.find_all("floating-action-bar").is_empty());
+    });
+}

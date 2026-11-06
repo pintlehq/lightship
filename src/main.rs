@@ -25,10 +25,11 @@ use std::rc::Rc;
 mod tests;
 gpui::actions!(lightship, [Quit, Search, ToggleSidebar, TogglePanel]);
 
+mod bulk;
 mod catalog;
 mod resource_page;
 use catalog::documents;
-use resource_page::{Inspect, PanelState, ResourcePage};
+use resource_page::{Inspect, PanelState, ResourcePage, ShowOutput};
 struct Lightship {
     workspace: Entity<Workspace>,
     navigation: Entity<NavigationTree>,
@@ -98,6 +99,18 @@ impl Lightship {
             });
             cx.notify();
         });
+        let output = cx.subscribe_in(
+            &panel_state,
+            window,
+            |this, _, _: &ShowOutput, window, cx| {
+                this.panel_tab = 1;
+                let focus = this.workspace.read(cx).active_focus_handle(cx);
+                this.layout.update(cx, |layout, cx| {
+                    layout.set_panel_visible(true, &focus, window, cx)
+                });
+                cx.notify();
+            },
+        );
         let nav = cx.subscribe_in(
             &navigation,
             window,
@@ -164,7 +177,14 @@ impl Lightship {
             panel_tab: 0,
             panel_state,
             panel_focus: [cx.focus_handle(), cx.focus_handle()],
-            _subscriptions: vec![nav, layout_sub, workspace_sub, panel_observe, inspect],
+            _subscriptions: vec![
+                nav,
+                layout_sub,
+                workspace_sub,
+                panel_observe,
+                inspect,
+                output,
+            ],
         }
     }
     fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
