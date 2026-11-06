@@ -587,7 +587,7 @@ fn bulk_responsive_bar_split_and_overview(cx: &mut TestAppContext) {
             step(cx, handle, |window, _| {
                 let bar = window.find("floating-action-bar").bounds();
                 let last = window.find(("resource-row", 28usize)).bounds();
-                assert!(last.bottom() <= bar.top(), "last row remains above actions");
+                assert!(last.bottom() > bar.top(), "rows extend behind the overlay");
             });
         }
     }
@@ -690,5 +690,137 @@ fn bulk_keyboard_simulation_cancel_and_focus_fallback(cx: &mut TestAppContext) {
     step(cx, handle, |window, cx| {
         assert_eq!(window.focused(cx), Some(page.focus_handle(cx)));
         assert!(window.find_all("floating-action-bar").is_empty());
+    });
+}
+
+#[gpui_kit::test]
+fn bulk_overlay_preserves_viewport_scroll_and_pointer_targets(cx: &mut TestAppContext) {
+    let (handle, app) = open(cx);
+    let page = cx.update(|cx| active_page(&app, cx));
+    let table = cx.update(|cx| page.read(cx).table.clone());
+    for dimensions in [size(px(1440.), px(900.)), size(px(1024.), px(680.))] {
+        cx.simulate_window_resize(handle, dimensions);
+        for mode in [theme::ThemeMode::Light, theme::ThemeMode::Dark] {
+            cx.update(|cx| theme::set_mode(mode, cx));
+            step(cx, handle, |_, cx| {
+                table.update(cx, |table, cx| table.scroll_to_row(28, cx))
+            });
+            let mut before = None;
+            step(cx, handle, |window, cx| {
+                before = Some((
+                    window.find("resource-table-viewport").bounds(),
+                    window.find(("resource-row", 28usize)).bounds(),
+                    table
+                        .read(cx)
+                        .vertical_scroll_handle
+                        .0
+                        .borrow()
+                        .base_handle
+                        .offset(),
+                    table.read(cx).horizontal_scroll_handle.offset(),
+                ));
+                window.click("select-visible", cx);
+            });
+            step(cx, handle, |window, cx| {
+                let (viewport, row, vertical, horizontal) = before.unwrap();
+                assert_eq!(window.find("resource-table-viewport").bounds(), viewport);
+                assert_eq!(window.find(("resource-row", 28usize)).bounds(), row);
+                assert_eq!(
+                    table
+                        .read(cx)
+                        .vertical_scroll_handle
+                        .0
+                        .borrow()
+                        .base_handle
+                        .offset(),
+                    vertical
+                );
+                assert_eq!(table.read(cx).horizontal_scroll_handle.offset(), horizontal);
+                let bar = window.find("floating-action-bar").bounds();
+                assert!(
+                    row.bottom() > bar.top(),
+                    "rows must continue underneath the overlay"
+                );
+                assert_eq!(bar.bottom(), viewport.bottom() - px(12.));
+                // Click the bar's non-button surface above a real table row.
+                window.click_at("floating-action-bar", point(px(8.), px(24.)), cx);
+                assert!(
+                    !app.read(cx).layout.read(cx).panel_visible,
+                    "bar must occlude the row"
+                );
+                window.click("bulk-clear", cx);
+            });
+            step(cx, handle, |window, cx| {
+                let (viewport, row, vertical, horizontal) = before.unwrap();
+                assert!(window.find_all("floating-action-bar").is_empty());
+                assert_eq!(window.find("resource-table-viewport").bounds(), viewport);
+                assert_eq!(window.find(("resource-row", 28usize)).bounds(), row);
+                assert_eq!(
+                    table
+                        .read(cx)
+                        .vertical_scroll_handle
+                        .0
+                        .borrow()
+                        .base_handle
+                        .offset(),
+                    vertical
+                );
+                assert_eq!(table.read(cx).horizontal_scroll_handle.offset(), horizontal);
+            });
+        }
+    }
+    step(cx, handle, |window, cx| window.click("select-visible", cx));
+    let mut bar_before_scroll = None;
+    let mut offset_before_scroll = None;
+    step(cx, handle, |window, cx| {
+        bar_before_scroll = Some(window.find("floating-action-bar").bounds());
+        offset_before_scroll = Some(
+            table
+                .read(cx)
+                .vertical_scroll_handle
+                .0
+                .borrow()
+                .base_handle
+                .offset(),
+        );
+        window.scroll(
+            "resource-table-viewport",
+            gpui::ScrollDelta::Pixels(point(px(0.), px(120.))),
+            cx,
+        );
+    });
+    step(cx, handle, |window, cx| {
+        let bar = window.find("floating-action-bar").bounds();
+        assert_eq!(Some(bar), bar_before_scroll);
+        assert_ne!(
+            Some(
+                table
+                    .read(cx)
+                    .vertical_scroll_handle
+                    .0
+                    .borrow()
+                    .base_handle
+                    .offset()
+            ),
+            offset_before_scroll
+        );
+        window.scroll(
+            "resource-table-viewport",
+            gpui::ScrollDelta::Pixels(point(px(-120.), px(0.))),
+            cx,
+        );
+    });
+    step(cx, handle, |window, cx| {
+        let bar = window.find("floating-action-bar").bounds();
+        assert_eq!(Some(bar), bar_before_scroll);
+        assert!(table.read(cx).horizontal_scroll_handle.offset().x < px(0.));
+        let viewport = window.find("resource-table-viewport").bounds();
+        // Transparent space next to the bar must still inspect a table row.
+        let position = point(px(70.), bar.center().y - viewport.top());
+        assert!(viewport.left() + position.x < bar.left());
+        window.click_at("resource-table-viewport", position, cx);
+    });
+    step(cx, handle, |_, cx| {
+        assert!(app.read(cx).layout.read(cx).panel_visible)
     });
 }
