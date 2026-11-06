@@ -1,4 +1,4 @@
-use crate::bulk::{BulkAction, BulkDialog};
+use crate::backend::{Backend, Job, Snapshot, presentation};
 use crate::catalog::{self, Resource, Row};
 use gpui::base::ElementExt;
 use gpui::component::{
@@ -16,33 +16,9 @@ use pintle_gpui_kit::{
     shell::workspace::Document,
 };
 use std::collections::HashSet;
+use std::{sync::Arc, time::Duration};
 
-#[derive(Default)]
-pub struct PanelState {
-    pub details: String,
-    pub output: Vec<String>,
-}
-pub struct ShowOutput;
-impl EventEmitter<ShowOutput> for PanelState {}
-pub struct Inspect;
-impl EventEmitter<Inspect> for PanelState {}
-impl PanelState {
-    fn inspect(&mut self, cluster: &str, resource: Resource, row: &Row, cx: &mut Context<Self>) {
-        self.details = format!(
-            "Demo · {cluster} / {}\n\n{}",
-            resource.title,
-            resource
-                .columns()
-                .iter()
-                .zip(&row.cells)
-                .map(|(label, cell)| format!("{label}: {}", cell.text))
-                .collect::<Vec<_>>()
-                .join("\n")
-        );
-        cx.emit(Inspect);
-        cx.notify();
-    }
-}
+pub use crate::inspector::{Inspect, PanelState};
 #[derive(Clone)]
 pub struct Rows {
     pub cluster: String,
@@ -54,10 +30,18 @@ pub struct Rows {
     pub selected: HashSet<String>,
     pub sort: Option<(usize, ColumnSort)>,
     pub(crate) panel: Entity<PanelState>,
+    pub key: String,
+    pub objects: std::collections::HashMap<String, serde_json::Value>,
+    pub status: String,
 }
 impl Rows {
-    pub fn new(cluster: String, resource: Resource, panel: Entity<PanelState>) -> Self {
-        let rows = catalog::fixtures(&cluster, resource);
+    pub fn new(
+        cluster: String,
+        resource: Resource,
+        panel: Entity<PanelState>,
+        key: String,
+    ) -> Self {
+        let rows = Vec::new();
         let mut result = Self {
             cluster,
             resource,
@@ -68,6 +52,9 @@ impl Rows {
             selected: HashSet::new(),
             sort: None,
             panel,
+            key,
+            objects: Default::default(),
+            status: "Loading…".into(),
         };
         result.rebuild();
         result
@@ -137,10 +124,19 @@ impl Rows {
             }
         }
     }
-    pub fn refresh(&mut self) {
-        self.rows = catalog::fixtures(&self.cluster, self.resource);
-        self.selected
-            .retain(|id| self.rows.iter().any(|r| &r.id == id));
+    pub fn replace(&mut self, snapshot: Snapshot) {
+        self.status = snapshot.status;
+        self.objects.clear();
+        self.rows = snapshot
+            .objects
+            .into_iter()
+            .map(|object| {
+                let row = presentation::row(&self.cluster, self.resource, &object);
+                self.objects.insert(row.id.clone(), object);
+                row
+            })
+            .collect();
+        self.selected.retain(|id| self.objects.contains_key(id));
         self.rebuild();
     }
 }
@@ -319,7 +315,8 @@ impl TableDelegate for Rows {
         if col > record.cells.len() {
             let panel = self.panel.clone();
             let cluster = self.cluster.clone();
-            let resource = self.resource;
+            let key = self.key.clone();
+            let object = self.objects.get(&record.id).cloned();
             return div()
                 .h_full()
                 .flex()
@@ -333,12 +330,20 @@ impl TableDelegate for Rows {
                         .dropdown_menu(move |menu, _, _| {
                             let panel = panel.clone();
                             let cluster = cluster.clone();
-                            let details = record.clone();
+                            let object = object.clone();
+                            let key = key.clone();
                             let name = record.name.clone();
                             menu.item(PopupMenuItem::new("View details").on_click(
                                 move |_, _, cx| {
                                     panel.update(cx, |panel, cx| {
-                                        panel.inspect(&cluster, resource, &details, cx)
+                                        if let Some(object) = &object {
+                                            panel.inspect(
+                                                cluster.clone(),
+                                                key.clone(),
+                                                object.clone(),
+                                                cx,
+                                            );
+                                        }
                                     });
                                 },
                             ))
@@ -391,7 +396,17 @@ impl TableDelegate for Rows {
             .aria_label("No matching resources")
             .test_support()
             .p_6()
-            .child("No matching resources")
+            .child(
+                if self.status.starts_with("Loading")
+                    || self.status.contains("Forbidden")
+                    || self.status.contains("Disconnected")
+                    || self.status.contains("unavailable")
+                {
+                    self.status.clone()
+                } else {
+                    "No matching resources".into()
+                },
+            )
     }
 }
 pub struct ResourcePage {
@@ -399,19 +414,29 @@ pub struct ResourcePage {
     pub filter: Entity<InputState>,
     pub compact_actions: bool,
     action_focus: [FocusHandle; 5],
-    pub bulk_dialog: Option<Entity<BulkDialog>>,
+    backend: Arc<Backend>,
+    job: Job<Snapshot>,
+    title: String,
+    _poll: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
 impl ResourcePage {
     pub fn new(
         document: &Document,
         panel: Entity<PanelState>,
+        backend: Arc<Backend>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let (cluster, resource) = catalog::resolve(document);
+        let (cluster, mut resource) = catalog::resolve(document);
+        let key = document.key.0.split_once('/').unwrap().1.to_owned();
+        if resource.key == "custom" {
+            resource.namespaced = backend.spec(&cluster, &key).namespaced;
+        }
+        let job = backend.resources(cluster.clone(), key.clone());
+        let title = format!("{} / {}", document.context, document.title);
         let table = cx.new(|cx| {
-            TableState::new(Rows::new(cluster, resource, panel), window, cx)
+            TableState::new(Rows::new(cluster, resource, panel, key), window, cx)
                 .row_selectable(true)
                 .col_selectable(false)
         });
@@ -432,25 +457,70 @@ impl ResourcePage {
         let selected = cx.subscribe(&table, |_, table, event: &TableEvent, cx| {
             if let TableEvent::SelectRow(row) = event {
                 let rows = table.read(cx).delegate();
-                let panel = rows.panel.clone();
-                let cluster = rows.cluster.clone();
-                let resource = rows.resource;
-                let record = rows.visible.get(*row).map(|i| rows.rows[*i].clone());
-                if let Some(record) = record {
-                    panel.update(cx, |panel, cx| {
-                        panel.inspect(&cluster, resource, &record, cx)
+                let selected = rows
+                    .visible
+                    .get(*row)
+                    .and_then(|i| rows.objects.get(&rows.rows[*i].id))
+                    .map(|object| {
+                        (
+                            rows.panel.clone(),
+                            rows.cluster.clone(),
+                            rows.key.clone(),
+                            object.clone(),
+                        )
                     });
+                if let Some((panel, cluster, key, object)) = selected {
+                    panel.update(cx, |panel, cx| panel.inspect(cluster, key, object, cx));
                 }
             }
         });
         let observe = cx.observe(&table, |_, _, cx| cx.notify());
+        let timer = cx.background_executor().clone();
+        let poll = cx.spawn(async move |entity, cx| {
+            loop {
+                timer.timer(Duration::from_millis(100)).await;
+                if entity
+                    .update(cx, |this, cx| {
+                        if let Some(result) = this.job.take() {
+                            this.table.update(cx, |table, cx| {
+                                let rows = table.delegate_mut();
+                                match result {
+                                    Ok(snapshot) => rows.replace(snapshot),
+                                    Err(e) => {
+                                        rows.status = if rows.rows.is_empty() {
+                                            e
+                                        } else {
+                                            format!("Stale data · {e}")
+                                        }
+                                    }
+                                }
+                                cx.notify();
+                            });
+                        }
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
         Self {
             table,
             filter,
             compact_actions: false,
             action_focus: std::array::from_fn(|_| cx.focus_handle()),
-            bulk_dialog: None,
+            backend,
+            job,
+            title,
+            _poll: poll,
             _subscriptions: vec![changed, selected, observe],
+        }
+    }
+    pub fn rename(&mut self, document: &Document, cx: &mut Context<Self>) {
+        let title = format!("{} / {}", document.context, document.title);
+        if self.title != title {
+            self.title = title;
+            cx.notify();
         }
     }
     pub fn clear_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -460,78 +530,11 @@ impl ResourcePage {
         });
         self.table.focus_handle(cx).focus(window, cx);
     }
-    pub fn open_bulk(&mut self, action: BulkAction, window: &mut Window, cx: &mut Context<Self>) {
-        let rows = self.table.read(cx).delegate().clone();
-        if rows.selected.is_empty() || !BulkAction::for_resource(rows.resource).contains(&action) {
-            return;
-        }
-        let index = if self.compact_actions && action != BulkAction::Delete {
-            3
-        } else {
-            action as usize
-        };
-        let origin = self.action_focus[index].clone();
-        origin.focus(window, cx);
-        let owner = cx.weak_entity();
-        let dialog = cx.new(|cx| {
-            BulkDialog::new(
-                action,
-                &rows,
-                move |window, cx| {
-                    let _ = owner.update(cx, |page, cx| {
-                        let rows = page.table.read(cx).delegate();
-                        if rows.selected.is_empty()
-                            || (index != 0 && page.compact_actions != (index == 3))
-                        {
-                            page.table.focus_handle(cx).focus(window, cx);
-                        } else {
-                            origin.focus(window, cx);
-                        }
-                    });
-                },
-                window,
-                cx,
-            )
-        });
-        self.bulk_dialog = Some(dialog.clone());
-        window.open_dialog(cx, move |surface, _, _| {
-            let confirm = dialog.clone();
-            let restore = dialog.clone();
-            surface
-                .title(format!("{} · Demo", action.label()))
-                .width(px(540.))
-                .child(dialog.clone())
-                .on_ok(move |_, _, cx| confirm.update(cx, |dialog, cx| dialog.confirm(cx)))
-                .on_close(move |_, window, cx| {
-                    restore.update(cx, |dialog, cx| dialog.restore_focus(window, cx))
-                })
-        });
-    }
-    fn bulk_button(&self, action: BulkAction, cx: &Context<Self>) -> Button {
-        Button::new(action.id())
-            .label(action.label())
-            .icon(match action {
-                BulkAction::Delete => gpui::assets::IconName::Trash,
-                BulkAction::Scale => gpui::assets::IconName::ChevronsUpDown,
-                BulkAction::Restart => gpui::assets::IconName::RefreshCw,
-            })
-            .small()
-            .ghost()
-            .track_focus(&self.action_focus[action as usize])
-            .when(action == BulkAction::Delete, |button| {
-                button
-                    .outline()
-                    .text_color(cx.theme().danger)
-                    .border_color(cx.theme().danger.opacity(0.5))
-            })
-            .on_click(cx.listener(move |page, _, window, cx| page.open_bulk(action, window, cx)))
-    }
     fn bulk_bar(&self, cx: &Context<Self>) -> impl IntoElement {
         let rows = self.table.read(cx).delegate();
         let count = rows.selected.len();
         let hidden = rows.hidden_selected_count();
-        let actions = BulkAction::for_resource(rows.resource);
-        let owner = cx.weak_entity();
+
         let summary = format!(
             "{count} selected{}",
             if hidden > 0 {
@@ -559,42 +562,22 @@ impl ResourcePage {
                             .child(format!("{hidden} hidden by filters")),
                     )
                 }),
-            div()
-                .flex()
-                .items_center()
-                .gap_1()
-                .flex_shrink_0()
-                .child(self.bulk_button(BulkAction::Delete, cx))
-                .when(!self.compact_actions, |bar| {
-                    bar.children(
-                        actions
-                            .iter()
-                            .skip(1)
-                            .map(|action| self.bulk_button(*action, cx)),
-                    )
-                })
-                .when(self.compact_actions && actions.len() > 1, |bar| {
-                    bar.child(
-                        Button::new("bulk-more")
-                            .label("More")
-                            .small()
-                            .ghost()
-                            .track_focus(&self.action_focus[3])
-                            .dropdown_menu(move |mut menu, _, _| {
-                                for action in actions.iter().copied().skip(1) {
-                                    let owner = owner.clone();
-                                    menu = menu.item(PopupMenuItem::new(action.label()).on_click(
-                                        move |_, window, cx| {
-                                            let _ = owner.update(cx, |page, cx| {
-                                                page.open_bulk(action, window, cx)
-                                            });
-                                        },
-                                    ));
-                                }
-                                menu
-                            }),
-                    )
-                }),
+            Button::new("bulk-copy-names")
+                .label("Copy names")
+                .small()
+                .ghost()
+                .track_focus(&self.action_focus[0])
+                .on_click(cx.listener(|page, _, _, cx| {
+                    let rows = page.table.read(cx).delegate();
+                    let names = rows
+                        .rows
+                        .iter()
+                        .filter(|r| rows.selected.contains(&r.id))
+                        .map(|r| r.name.clone())
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    cx.write_to_clipboard(ClipboardItem::new_string(names));
+                })),
             Button::new("bulk-clear")
                 .icon(IconName::Close)
                 .small()
@@ -612,17 +595,16 @@ impl ResourcePage {
         });
     }
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
+        let rows = self.table.read(cx).delegate();
+        self.job = self
+            .backend
+            .resources(rows.cluster.clone(), rows.key.clone());
+        let panel = rows.panel.clone();
+        panel.update(cx, |panel, cx| {
+            panel.record(format!("Refresh requested · {}", self.title), cx)
+        });
         self.table.update(cx, |table, cx| {
-            let rows = table.delegate_mut();
-            rows.refresh();
-            let message = format!(
-                "Refreshed {} / {} · Demo data",
-                rows.cluster, rows.resource.title
-            );
-            rows.panel.update(cx, |panel, cx| {
-                panel.output.push(message);
-                cx.notify();
-            });
+            table.delegate_mut().status = "Loading…".into();
             cx.notify();
         });
     }
@@ -636,8 +618,21 @@ impl Render for ResourcePage {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let rows = self.table.read(cx).delegate();
         let resource = rows.resource;
-        let title = format!("{} / {}", rows.cluster, resource.title);
-        let count = format!("{} items · Demo data", rows.visible.len());
+        let title = self.title.clone();
+        let summary = if rows.status.starts_with("Read-only") {
+            "Read-only"
+        } else if rows.status.starts_with("Watch unavailable") {
+            "Read-only · polling"
+        } else if rows.status.starts_with("Loading") {
+            "Loading…"
+        } else {
+            "Unavailable / stale"
+        };
+        let status = rows.status.clone();
+        let failed = !rows.status.starts_with("Read-only")
+            && !rows.status.starts_with("Watch unavailable")
+            && !rows.status.starts_with("Loading");
+        let count = format!("{} items · {summary}", rows.visible.len());
         let namespace = rows.namespace.as_deref().unwrap_or("all").to_owned();
         let selected = !rows.selected.is_empty() && resource.key != "overview";
         let measure = cx.weak_entity();
@@ -649,6 +644,13 @@ impl Render for ResourcePage {
             .prefix(gpui::component::Icon::new(IconName::Search).size(px(14.)))
             .small()
             .map(|input| gpui::Styled::h(input, px(32.)));
+        let mut available: Vec<_> = rows
+            .rows
+            .iter()
+            .filter_map(|r| r.namespace.clone())
+            .collect();
+        available.sort();
+        available.dedup();
         let namespaces = Button::new("namespace-filter")
             .icon(gpui::assets::IconName::Funnel)
             .label(format!("Namespace: {namespace}"))
@@ -657,16 +659,17 @@ impl Render for ResourcePage {
             .dropdown_menu(move |mut menu, _, _| {
                 for namespace in [None]
                     .into_iter()
-                    .chain(catalog::NAMESPACES.into_iter().map(Some))
+                    .chain(available.clone().into_iter().map(Some))
                 {
                     let owner = owner.clone();
-                    menu = menu.item(PopupMenuItem::new(namespace.unwrap_or("all")).on_click(
-                        move |_, _, cx| {
-                            let _ = owner.update(cx, |page, cx| {
-                                page.set_namespace(namespace.map(str::to_owned), cx)
-                            });
-                        },
-                    ));
+                    menu = menu.item(
+                        PopupMenuItem::new(namespace.clone().unwrap_or_else(|| "all".into()))
+                            .on_click(move |_, _, cx| {
+                                let _ = owner.update(cx, |page, cx| {
+                                    page.set_namespace(namespace.clone(), cx)
+                                });
+                            }),
+                    );
                 }
                 menu
             });
@@ -676,19 +679,6 @@ impl Render for ResourcePage {
             .h(px(32.))
             .accessibility_label("Refresh resources")
             .on_click(cx.listener(|this, _, _, cx| this.refresh(cx)));
-        let create = Button::new("new-from-yaml")
-            .label("+ New from YAML")
-            .small()
-            .h(px(32.))
-            .bg(cx.theme().foreground)
-            .text_color(cx.theme().background)
-            .on_click(|_, window, cx| {
-                window.open_dialog(cx, |dialog, _, _| {
-                    dialog.title("New from YAML · Demo").child(
-                        "Resource creation is not available in Demo mode. No cluster is connected.",
-                    )
-                });
-            });
         let toolbar = div()
             .flex()
             .flex_wrap()
@@ -697,8 +687,7 @@ impl Render for ResourcePage {
             .min_w_0()
             .child(div().flex_1().min_w(px(90.)).child(filter))
             .when(resource.namespaced, |toolbar| toolbar.child(namespaces))
-            .child(refresh)
-            .child(create);
+            .child(refresh);
         div()
             .id(("resource-page", cx.entity_id()))
             .test_support()
@@ -743,6 +732,7 @@ impl Render for ResourcePage {
                     .aria_label(title.clone())
                     .test_support()
                     .font_weight(FontWeight::SEMIBOLD)
+                    .truncate()
                     .child(title),
                 div()
                     .id("resource-count")
@@ -753,6 +743,14 @@ impl Render for ResourcePage {
                     .child(count),
                 toolbar,
             ))
+            .when(failed, |d| {
+                d.child(
+                    div()
+                        .text_color(cx.theme().danger)
+                        .text_size(px(12.))
+                        .child(status),
+                )
+            })
             .child(
                 div().flex_1().min_h_0().min_w_0().child(
                     ResourceTable::new(&self.table)

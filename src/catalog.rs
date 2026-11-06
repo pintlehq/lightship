@@ -1,10 +1,9 @@
 //! Application-owned Kubernetes catalog and deterministic, offline fixtures.
-use pintle_gpui_kit::{
-    kit::assets::IconName,
-    shell::workspace::{Document, NavigationNode},
-};
+use pintle_gpui_kit::{kit::assets::IconName, shell::workspace::Document};
 
+#[cfg(test)]
 pub const CLUSTERS: [&str; 3] = ["Development", "Staging", "Production"];
+#[cfg(test)]
 pub const NAMESPACES: [&str; 4] = ["default", "apps", "monitoring", "kube-system"];
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Resource {
@@ -43,9 +42,9 @@ resources! {
     "clusterroles", "ClusterRoles", "Access Control", false, ["Rules"];
     "clusterrolebindings", "ClusterRoleBindings", "Access Control", false, ["Role", "Subjects"];
     "definitions", "Definitions", "Custom Resources", false, ["Group", "Scope", "Versions"];
-    "widgets", "Widgets", "Custom Resources", true, ["Status", "Size"];
 }
 impl Resource {
+    #[cfg(test)]
     pub fn document(self, cluster: &str) -> Document {
         Document::new(
             format!("{cluster}/{}", self.key).as_str(),
@@ -80,83 +79,43 @@ impl Resource {
         }
     }
 }
-pub fn documents() -> Vec<Document> {
-    CLUSTERS
-        .into_iter()
-        .flat_map(|c| RESOURCES.iter().map(move |r| r.document(c)))
-        .collect()
-}
 pub fn resolve(document: &Document) -> (String, Resource) {
     let (cluster, key) = document
         .key
         .0
         .split_once('/')
-        .expect("catalog document key");
+        .expect("resource document key");
     (
         cluster.to_owned(),
-        *RESOURCES
-            .iter()
-            .find(|r| r.key == key)
-            .expect("catalog resource"),
+        *RESOURCES.iter().find(|r| r.key == key).unwrap_or(&CUSTOM),
     )
 }
-pub fn navigation() -> Vec<NavigationNode> {
-    CLUSTERS
-        .into_iter()
-        .map(|cluster| {
-            let mut children = Vec::new();
-            let mut groups = std::collections::HashSet::new();
-            for resource in RESOURCES {
-                if resource.group.is_empty() {
-                    children.push(
-                        NavigationNode::resource(resource.document(cluster)).icon(resource.icon()),
-                    );
-                } else if groups.insert(resource.group) {
-                    children.push(
-                        NavigationNode::folder(
-                            format!("{cluster}/{}", resource.group),
-                            resource.group,
-                            RESOURCES
-                                .iter()
-                                .filter(|r| r.group == resource.group)
-                                .map(|r| {
-                                    NavigationNode::resource(r.document(cluster)).icon(r.icon())
-                                })
-                                .collect(),
-                        )
-                        .icon(match resource.group {
-                            "Workloads" => IconName::Box,
-                            "Network" => IconName::Network,
-                            "Storage" => IconName::HardDrive,
-                            "Access Control" => IconName::Shield,
-                            _ => IconName::Folder,
-                        }),
-                    );
-                }
-            }
-            NavigationNode::folder(cluster, cluster, children).icon(IconName::Server)
-        })
-        .collect()
-}
+pub const CUSTOM: Resource = Resource {
+    key: "custom",
+    title: "Custom Resource",
+    group: "Custom Resources",
+    namespaced: true,
+    fields: &["Kind"],
+};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Cell {
     pub text: String,
     pub number: Option<u64>,
 }
 impl Cell {
-    fn text(value: impl Into<String>) -> Self {
+    pub fn text(value: impl Into<String>) -> Self {
         Self {
             text: value.into(),
             number: None,
         }
     }
-    fn number(value: u64) -> Self {
+    pub fn number(value: u64) -> Self {
         Self {
             text: value.to_string(),
             number: Some(value),
         }
     }
-    fn formatted(value: u64, text: String) -> Self {
+    pub fn formatted(value: u64, text: String) -> Self {
         Self {
             text,
             number: Some(value),
@@ -171,6 +130,7 @@ pub struct Row {
     pub cells: Vec<Cell>,
     pub healthy: bool,
 }
+#[cfg(test)]
 pub fn fixtures(cluster: &str, resource: Resource) -> Vec<Row> {
     if resource.key == "overview" {
         return RESOURCES

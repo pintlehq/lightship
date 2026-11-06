@@ -10,6 +10,24 @@ publish = false
 [dependencies]
 pintle-gpui-kit = { git = "https://github.com/pintlehq/pintle-gpui-kit", rev = "2da5d9b7c485a46b3a2d49907bc36be4819ee252", features = ["shell", "assets"] }
 
+kube = { version = "=5.0.0", default-features = false, features = ["client", "config", "rustls-tls", "ring", "runtime"] }
+k8s-openapi = { version = "0.29", features = ["v1_34"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util"] }
+futures = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+http = "1"
+tower = { version = "0.5", features = ["util", "filter"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+sha2 = "0.10"
+base64 = "0.22"
+flate2 = "1"
+chrono = "0.4"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3"
+
 [dev-dependencies]
 gpui-kit = { version = "=0.8.1", default-features = false, features = ["test-support", "component", "assets"] }
 
