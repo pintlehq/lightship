@@ -29,6 +29,7 @@ mod backend;
 mod catalog;
 mod connections;
 mod inspector;
+mod onboarding;
 mod resource_page;
 use resource_page::{Inspect, PanelState, ResourcePage};
 struct Lightship {
@@ -178,7 +179,8 @@ impl Lightship {
             CommandEntry::new("toggle-sidebar", "Commands", "Toggle Sidebar"),
             CommandEntry::new("toggle-panel", "Commands", "Toggle Panel"),
             CommandEntry::new("toggle-theme", "Commands", "Toggle Appearance"),
-            CommandEntry::new("manage-clusters", "Commands", "Add / Manage Clusters"),
+            CommandEntry::new("add-cluster", "Commands", "Add Cluster"),
+            CommandEntry::new("manage-clusters", "Commands", "Manage Clusters"),
         ]);
         let palette = CommandPalette::new(entries, window, cx);
         let mut previous_documents = documents.clone();
@@ -254,27 +256,85 @@ impl Lightship {
     }
     fn commands() -> Vec<CommandEntry> {
         vec![
-            CommandEntry::new("manage-clusters", "Commands", "Add / Manage Clusters"),
+            CommandEntry::new("add-cluster", "Commands", "Add Cluster"),
+            CommandEntry::new("manage-clusters", "Commands", "Manage Clusters"),
             CommandEntry::new("toggle-sidebar", "Commands", "Toggle Sidebar"),
             CommandEntry::new("toggle-panel", "Commands", "Toggle Panel"),
             CommandEntry::new("toggle-theme", "Commands", "Toggle Appearance"),
         ]
     }
+    fn add_cluster(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        #[cfg(not(test))]
+        let paths = backend::config::default_files();
+        #[cfg(test)]
+        let paths = Vec::new();
+        let form =
+            cx.new(|cx| onboarding::AddCluster::new(self.connections.clone(), paths, window, cx));
+        self.open_add_cluster(form, window, cx);
+    }
+    fn open_add_cluster(
+        &mut self,
+        form: Entity<onboarding::AddCluster>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let return_focus = window.focused(cx).unwrap_or_else(|| self.focus_handle(cx));
+        window.open_dialog(cx, move |dialog, window, cx| {
+            let close = form.clone();
+            let return_focus = return_focus.clone();
+            let footer = form.update(cx, |form, cx| form.footer(cx).into_any_element());
+            dialog
+                .title(
+                    div()
+                        .h(px(52.))
+                        .px_5()
+                        .flex()
+                        .items_center()
+                        .gap_3()
+                        .border_b_1()
+                        .border_color(cx.theme().border)
+                        .child(gpui::component::Icon::new(IconName::Server).size(px(18.)))
+                        .child("Add cluster"),
+                )
+                .width(px(720.))
+                .h((window.viewport_size().height - px(64.)).min(form.read(cx).preferred_height()))
+                .centered()
+                .p_0()
+                .gap_0()
+                .rounded_xl()
+                .font_family(cx.theme().mono_font_family.clone())
+                .text_size(px(13.))
+                .overlay_closable(false)
+                .content({
+                    let form = form.clone();
+                    move |content, _, _| {
+                        content
+                            .min_h_0()
+                            .overflow_hidden()
+                            .p_0()
+                            .child(form.clone())
+                    }
+                })
+                .footer(footer)
+                .on_close(move |_, window, cx| {
+                    close.update(cx, |form, cx| form.clear(window, cx));
+                    return_focus.focus(window, cx);
+                })
+        });
+    }
     fn manage_clusters(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let manager = self.connections.clone();
-        let owner = cx.weak_entity();
-        window.open_dialog(cx, move |dialog, _, _| {
-            let manager = manager.clone();
-            let close = manager.clone();
-            let owner = owner.clone();
+        let return_focus = window.focused(cx).unwrap_or_else(|| self.focus_handle(cx));
+        window.open_dialog(cx, move |dialog, _, cx| {
+            let return_focus = return_focus.clone();
             dialog
-                .title("Add / Manage clusters · Read-only")
+                .title("Manage clusters · Read-only")
                 .width(px(720.))
-                .child(manager)
-                .on_close(move |_, window, cx| {
-                    close.update(cx, |manager, cx| manager.clear_transient(window, cx));
-                    let _ = owner.update(cx, |app, cx| app.focus_handle(cx).focus(window, cx));
-                })
+                .centered()
+                .font_family(cx.theme().mono_font_family.clone())
+                .text_size(px(13.))
+                .child(manager.clone())
+                .on_close(move |_, window, cx| return_focus.focus(window, cx))
         });
     }
     fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -315,6 +375,7 @@ impl Lightship {
                         "toggle-sidebar" => this.toggle_sidebar(window, cx),
                         "toggle-panel" => this.toggle_panel(window, cx),
                         "toggle-theme" => this.toggle_theme(cx),
+                        "add-cluster" => this.add_cluster(window, cx),
                         "manage-clusters" => this.manage_clusters(window, cx),
                         _ => {
                             if let Some(doc) = this
@@ -480,7 +541,7 @@ impl Render for Lightship {
                                 Button::new("add-first-cluster")
                                     .label("Add cluster")
                                     .on_click(cx.listener(|this, _, window, cx| {
-                                        this.manage_clusters(window, cx)
+                                        this.add_cluster(window, cx)
                                     })),
                             )
                             .into_any_element()
@@ -499,9 +560,18 @@ impl Render for Lightship {
                         .flex()
                         .flex_col()
                         .child(
-                            Button::new("manage-clusters")
-                                .label("+ Add / Manage clusters")
+                            Button::new("add-cluster")
+                                .label("+ Add cluster")
                                 .small()
+                                .on_click(
+                                    cx.listener(|this, _, window, cx| this.add_cluster(window, cx)),
+                                ),
+                        )
+                        .child(
+                            Button::new("manage-clusters")
+                                .label("Manage clusters")
+                                .small()
+                                .ghost()
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.manage_clusters(window, cx)
                                 })),

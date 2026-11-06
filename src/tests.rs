@@ -387,11 +387,10 @@ fn onboarding_ignores_unselected_plugin_details_and_fits_both_sizes(cx: &mut Tes
     let (handle, app) = open_empty(cx);
     step(cx, handle, |window, cx| {
         let config=backend::config::parse_yaml(&format!("apiVersion: v1\nkind: Config\nclusters:\n- name: cluster\n  cluster:\n    server: https://example.invalid\nusers:\n- name: cloud\n  user:\n    exec:\n      command: /usr/bin/true\n      args: [{}]\n      apiVersion: client.authentication.k8s.io/v1\n      interactiveMode: Never\ncontexts:\n- name: not-selected\n  context:\n    cluster: cluster\n    user: cloud\n",vec!["argument";200].join(","))).unwrap();
-        app.read(cx)
-            .connections
-            .clone()
-            .update(cx, |m, cx| m.set_test_candidates(config, cx));
-        app.update(cx, |app, cx| app.manage_clusters(window, cx));
+        let manager = app.read(cx).connections.clone();
+        let form = cx.new(|cx| onboarding::AddCluster::new(manager, Vec::new(), window, cx));
+        form.update(cx, |form, cx| form.set_test_candidates(config, cx));
+        app.update(cx, |app, cx| app.open_add_cluster(form, window, cx));
     });
     for dimensions in [size(px(1440.), px(900.)), size(px(1024.), px(680.))] {
         cx.simulate_window_resize(handle, dimensions);

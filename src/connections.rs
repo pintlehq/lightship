@@ -4,10 +4,9 @@ use crate::backend::{
     config::{self, Connection, Settings, Source},
 };
 use gpui::component::{
-    ActiveTheme, Disableable, Sizable,
+    ActiveTheme, Sizable,
     button::{Button, ButtonVariants},
-    checkbox::Checkbox,
-    input::{Input, InputState, Textarea, TextareaState},
+    input::{Input, InputState},
 };
 use gpui::{prelude::*, *};
 use pintle_gpui_kit::{
@@ -27,14 +26,7 @@ pub struct Connections {
     jobs: HashMap<String, Job<Vec<Spec>>>,
     descriptions: HashMap<String, String>,
     reviews: HashMap<String, Option<String>>,
-    path: Entity<InputState>,
-    yaml: Entity<TextareaState>,
     rename: Entity<InputState>,
-    pasted: bool,
-    candidate: Option<kube::config::Kubeconfig>,
-    source: Option<Source>,
-    selected: HashSet<String>,
-    trusted: HashSet<String>,
     pub error: String,
     persistence_ok: bool,
     _poll: Task<()>,
@@ -48,11 +40,6 @@ impl Connections {
         };
         #[cfg(test)]
         let (settings, persistence_ok, error) = (Settings::default(), true, String::new());
-        let path = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("Kubeconfig file path (blank uses KUBECONFIG / ~/.kube/config)")
-        });
-        let yaml = cx.new(|cx| TextareaState::new(window, cx).placeholder("Paste kubeconfig YAML"));
         let rename = cx.new(|cx| InputState::new(window, cx).placeholder("New display name"));
         let timer = cx.background_executor().clone();
         let poll = cx.spawn(async move |entity, cx| {
@@ -71,14 +58,7 @@ impl Connections {
             jobs: HashMap::new(),
             descriptions: HashMap::new(),
             reviews: HashMap::new(),
-            path,
-            yaml,
             rename,
-            pasted: false,
-            candidate: None,
-            source: None,
-            selected: HashSet::new(),
-            trusted: HashSet::new(),
             error,
             persistence_ok,
             _poll: poll,
@@ -87,15 +67,6 @@ impl Connections {
             result.connect(&connection.id);
         }
         result
-    }
-    pub fn clear_transient(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.candidate = None;
-        self.selected.clear();
-        self.trusted.clear();
-        self.source = None;
-        self.yaml
-            .update(cx, |input, cx| input.set_value("", window, cx));
-        cx.notify();
     }
     fn poll(&mut self, cx: &mut Context<Self>) {
         let mut complete = Vec::new();
@@ -186,91 +157,42 @@ impl Connections {
         self.settings.dark = dark;
         self.persist();
     }
-    fn browse(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let paths = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: false,
-            prompt: Some("Choose kubeconfig".into()),
-        });
-        cx.spawn_in(window, async move |entity, cx| {
-            if let Ok(Ok(Some(paths))) = paths.await
-                && let Some(path) = paths.first()
-            {
-                let _ = entity.update_in(cx, |this, window, cx| {
-                    this.path.update(cx, |input, cx| {
-                        input.set_value(path.to_string_lossy().into_owned(), window, cx)
-                    });
-                    this.pasted = false;
-                    this.load_candidates(cx);
-                });
-            }
-        })
-        .detach();
+    /// Persist an already reviewed import atomically, then start read-only connections.
+    pub fn import(
+        &mut self,
+        source: Option<&Source>,
+        yaml: &str,
+        targets: &[(String, Option<String>)],
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        self.import_using(
+            source,
+            yaml,
+            targets,
+            config::keychain_write,
+            config::keychain_delete,
+            cx,
+        )
     }
-    fn load_candidates(&mut self, cx: &mut Context<Self>) {
-        self.candidate = None;
-        self.selected.clear();
-        self.trusted.clear();
-        self.error.clear();
-        let result = if self.pasted {
-            self.source = None;
-            config::parse_yaml(self.yaml.read(cx).value().as_ref())
-        } else {
-            let text = self.path.read(cx).value().to_string();
-            let paths = if text.trim().is_empty() {
-                config::default_files()
-            } else {
-                let path = text.trim();
-                vec![if let Some(tail) = path.strip_prefix("~/") {
-                    std::path::PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
-                        .join(tail)
-                } else {
-                    std::path::PathBuf::from(path)
-                }]
-            };
-            let paths: Vec<_> = paths
-                .into_iter()
-                .map(|p| std::fs::canonicalize(&p).unwrap_or(p))
-                .collect();
-            self.source = Some(Source::Files(paths.clone()));
-            config::read_files(&paths)
-        };
-        match result {
-            Ok(config) => self.candidate = Some(config),
-            Err(e) => self.error = e,
-        }
-        cx.notify();
-    }
-    fn add(&mut self, cx: &mut Context<Self>) {
-        let Some(candidate) = self.candidate.clone() else {
-            return;
-        };
+    fn import_using(
+        &mut self,
+        source: Option<&Source>,
+        yaml: &str,
+        targets: &[(String, Option<String>)],
+        mut write_key: impl FnMut(&str, &str) -> Result<(), String>,
+        mut delete_key: impl FnMut(&str) -> Result<(), String>,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
         let old = self.settings.connections.clone();
         let mut added = Vec::new();
         let mut saved_keys = Vec::new();
         let result = (|| {
-            for context in &self.selected {
-                let mut config = candidate.clone();
-                let fingerprint = config::prepare(&mut config, context)?;
-                if fingerprint.is_some() && !self.trusted.contains(context) {
-                    return Err(
-                        "Review and trust the credential plugin for every selected context".into(),
-                    );
-                }
-                if self
-                    .settings
-                    .connections
-                    .iter()
-                    .any(|c| c.context == *context && self.source.as_ref() == Some(&c.source))
-                {
-                    continue;
-                }
+            for (context, fingerprint) in targets {
                 let id = uuid::Uuid::new_v4().to_string();
-                let source = if let Some(source) = &self.source {
+                let source = if let Some(source) = source {
                     source.clone()
                 } else {
-                    config::keychain_write(&id, self.yaml.read(cx).value().as_ref())?;
+                    write_key(&id, yaml)?;
                     saved_keys.push(id.clone());
                     Source::Keychain(id.clone())
                 };
@@ -279,7 +201,7 @@ impl Connections {
                     name: context.clone(),
                     context: context.clone(),
                     source,
-                    trusted_exec: fingerprint,
+                    trusted_exec: fingerprint.clone(),
                 });
                 added.push(id);
             }
@@ -289,19 +211,20 @@ impl Connections {
                 Err(self.error.clone())
             }
         })();
-        if let Err(e) = result {
+        if let Err(error) = result {
             self.settings.connections = old;
             for id in saved_keys {
-                let _ = config::keychain_delete(&id);
+                let _ = delete_key(&id);
             }
-            self.error = e;
-        } else {
-            self.selected.clear();
-            for id in added {
-                self.connect(&id);
-            }
+            self.error = error.clone();
+            cx.notify();
+            return Err(error);
+        }
+        for id in added {
+            self.connect(&id);
         }
         cx.notify();
+        Ok(())
     }
     fn remove(&mut self, id: &str, cx: &mut Context<Self>) {
         let old = self.settings.connections.clone();
@@ -370,15 +293,6 @@ impl Connections {
                 Err(e) => self.error = e,
             }
         }
-        cx.notify();
-    }
-    #[cfg(test)]
-    pub fn set_test_candidates(
-        &mut self,
-        config: kube::config::Kubeconfig,
-        cx: &mut Context<Self>,
-    ) {
-        self.candidate = Some(config);
         cx.notify();
     }
     pub fn documents(&self) -> Vec<Document> {
@@ -454,129 +368,19 @@ impl Connections {
 }
 impl Render for Connections {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let contexts: Vec<_> = self
-            .candidate
-            .as_ref()
-            .map(|c| {
-                c.contexts
-                    .iter()
-                    .map(|v| {
-                        let mut prepared = c.clone();
-                        let result = config::prepare(&mut prepared, &v.name);
-                        (
-                            v.name.clone(),
-                            config::plugin_description(&prepared, &v.name),
-                            result,
-                        )
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
         div()
             .id("cluster-manager")
+            .font_family(cx.theme().mono_font_family.clone())
+            .text_size(px(13.))
             .max_h((window.viewport_size().height - px(180.)).max(px(200.)))
             .overflow_y_scroll()
             .flex()
             .flex_col()
             .gap_3()
-            .child("Read-only · connections are saved on this Mac. Cluster data is never changed.")
-            .child(
-                div()
-                    .flex()
-                    .gap_2()
-                    .child(
-                        Button::new("use-file")
-                            .label("Kubeconfig file")
-                            .small()
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.pasted = false;
-                                this.candidate = None;
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Button::new("use-yaml")
-                            .label("Paste YAML")
-                            .small()
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.pasted = true;
-                                this.candidate = None;
-                                cx.notify();
-                            })),
-                    ),
-            )
-            .child(if self.pasted {
-                div()
-                    .h(px(150.))
-                    .child(Textarea::new(&self.yaml))
-                    .into_any_element()
-            } else {
-                div()
-                    .flex()
-                    .gap_2()
-                    .child(div().flex_1().child(Input::new(&self.path)))
-                    .child(
-                        Button::new("browse-kubeconfig")
-                            .label("Browse…")
-                            .small()
-                            .on_click(cx.listener(|this, _, window, cx| this.browse(window, cx))),
-                    )
-                    .into_any_element()
+            .child("Connections are saved on this Mac. Removing one only removes it from this app.")
+            .when(self.settings.connections.is_empty(), |d| {
+                d.child("No saved clusters. Use Add cluster to get started.")
             })
-            .child(
-                Button::new("read-contexts")
-                    .label("Read contexts")
-                    .small()
-                    .on_click(cx.listener(|this, _, _, cx| this.load_candidates(cx))),
-            )
-            .children(contexts.into_iter().map(|(name, plugin, result)| {
-                let key = name.clone();
-                let trust_key = name.clone();
-                let checked = self.selected.contains(&name);
-                let trusted = self.trusted.contains(&name);
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .child(
-                        Checkbox::new(SharedString::from(format!("context:{name}")))
-                            .label(name)
-                            .checked(checked)
-                            .on_change(cx.listener(move |this, checked, _, cx| {
-                                if *checked {
-                                    this.selected.insert(key.clone());
-                                } else {
-                                    this.selected.remove(&key);
-                                }
-                                cx.notify();
-                            })),
-                    )
-                    .when(!plugin.is_empty() && checked, |d| {
-                        d.child(div().text_size(px(11.)).child(plugin)).child(
-                            Checkbox::new(SharedString::from(format!("trust:{trust_key}")))
-                                .label("Trust this credential program and configuration")
-                                .checked(trusted)
-                                .on_change(cx.listener(move |this, checked, _, cx| {
-                                    if *checked {
-                                        this.trusted.insert(trust_key.clone());
-                                    } else {
-                                        this.trusted.remove(&trust_key);
-                                    }
-                                    cx.notify();
-                                })),
-                        )
-                    })
-                    .when_some(result.err(), |d, e| {
-                        d.child(div().text_color(cx.theme().danger).child(e))
-                    })
-            }))
-            .child(
-                Button::new("add-selected-clusters")
-                    .label("Add selected clusters")
-                    .small()
-                    .disabled(self.selected.is_empty())
-                    .on_click(cx.listener(|this, _, _, cx| this.add(cx))),
-            )
             .when(!self.error.is_empty(), |d| {
                 d.child(
                     div()
@@ -584,14 +388,7 @@ impl Render for Connections {
                         .child(self.error.clone()),
                 )
             })
-            .child(
-                div()
-                    .border_t_1()
-                    .border_color(cx.theme().border)
-                    .pt_3()
-                    .child("Saved clusters"),
-            )
-            .child(Input::new(&self.rename))
+            .child(Input::new(&self.rename).id("cluster-display-name"))
             .children(self.settings.connections.clone().into_iter().map(|c| {
                 let reconnect = c.id.clone();
                 let remove = c.id.clone();
@@ -667,5 +464,64 @@ impl Render for Connections {
                         )
                     })
             }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Connection, Connections, Source};
+    use crate::backend::Backend;
+    use pintle_gpui_kit::kit::{AppContext, TestAppContext};
+
+    #[gpui_kit::test]
+    fn failed_keychain_import_rolls_back_all_metadata_and_new_keys(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            crate::initialize(cx);
+            let (window, manager) = gpui::open_window(
+                pintle_gpui_kit::shell::workbench::window_options(cx),
+                cx,
+                |window, cx| cx.new(|cx| Connections::new(Backend::new(), window, cx)),
+            )
+            .unwrap();
+            window
+                .update(cx, |_, _, cx| {
+                    manager.update(cx, |m, cx| {
+                        m.settings.connections.push(Connection {
+                            id: "keep".into(),
+                            name: "Existing".into(),
+                            context: "old".into(),
+                            source: Source::Files(vec![]),
+                            trusted_exec: None,
+                        });
+                        let mut writes = Vec::new();
+                        let mut deleted = Vec::new();
+                        let result = m.import_using(
+                            None,
+                            "private test input",
+                            &[("one".into(), None), ("two".into(), None)],
+                            |id, _| {
+                                writes.push(id.to_string());
+                                if writes.len() == 2 {
+                                    Err("Keychain unavailable".into())
+                                } else {
+                                    Ok(())
+                                }
+                            },
+                            |id| {
+                                deleted.push(id.to_string());
+                                Ok(())
+                            },
+                            cx,
+                        );
+                        assert_eq!(result.unwrap_err(), "Keychain unavailable");
+                        assert_eq!(deleted, vec![writes[0].clone()]);
+                        assert_eq!(m.settings.connections.len(), 1);
+                        assert_eq!(m.settings.connections[0].id, "keep");
+                        assert!(m.jobs.is_empty());
+                        assert!(!m.error.contains("private test input"));
+                    });
+                })
+                .unwrap();
+        });
     }
 }

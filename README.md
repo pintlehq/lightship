@@ -7,12 +7,25 @@ this application has a separate identity and settings directory.
 
 ## Connect
 
-Choose **Add cluster**, browse or enter a kubeconfig path, or paste kubeconfig YAML.
-Leaving the path blank reads `KUBECONFIG`, otherwise `~/.kube/config`. Select the
-contexts to import. The application never changes the original kubeconfig or its
-current context. Display names can be changed independently of stable connection IDs.
-**Remove from app** removes only local connection metadata and its imported Keychain
-entry, never a Kubernetes cluster or resource.
+Choose **Add cluster** to automatically detect contexts from `KUBECONFIG` or
+`~/.kube/config`, or use **Choose file…** for another kubeconfig. The **paste YAML**
+tab detects contexts after you stop typing; **Load from file…** fills that editor.
+Select the contexts to import, review any credential programs, then choose
+**Add clusters**. Detection only reads configuration and never runs a credential
+program or connects to Kubernetes.
+
+Previously imported contexts are disabled and marked **ADDED**, using the context,
+server and user reference rather than display name or source file. Unreadable saved
+configurations produce a warning instead of a guessed duplicate result. Header and
+footer remain visible while long context lists and plugin reviews scroll. Cancel,
+close and Escape discard the import form and restore focus.
+
+**Manage clusters** is a separate dialog, also available through the command palette,
+for reconnecting, renaming and removing saved connections. The application never
+changes the original kubeconfig or its current context. Display names can be changed
+independently of stable connection IDs. **Remove from app** removes only local
+connection metadata and its imported Keychain entry, never a Kubernetes cluster or
+resource.
 
 Connection metadata and appearance are stored in
 `~/Library/Application Support/Lightship GPUI/settings.json`. File imports retain
@@ -82,7 +95,9 @@ contents or credentials. Do not run it against an unapproved context.
 
 The UI checks cover selection, filtering, sorting, splits, preview/permanent tabs,
 keyboard Escape/modal isolation, and the floating overlay geometry in light/dark at
-1440 × 900 and 1024 × 680. There is no Demo mode in the shipped application.
+1440 × 900 and 1024 × 680. Onboarding checks also cover automatic detection,
+YAML debounce, duplicate identities, plugin consent, cancellation and fixed dialog
+footer geometry. There is no Demo mode in the shipped application.
 
 ## Coordinated kit development
 
