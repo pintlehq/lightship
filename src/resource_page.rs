@@ -141,7 +141,7 @@ impl TableDelegate for Rows {
     fn column(&self, col: usize, _: &App) -> Column {
         if col == 0 {
             return Column::new("select", "")
-                .width(px(36.))
+                .width(px(44.))
                 .resizable(false)
                 .movable(false);
         }
@@ -202,21 +202,29 @@ impl TableDelegate for Rows {
                 .accessibility_label("Select visible rows")
                 .checked(all)
                 .indeterminate(mixed)
-                .size(px(14.))
-                .border_1()
-                .border_color(cx.theme().input)
-                .rounded(px(3.))
-                .text_size(px(11.))
+                .size(px(28.))
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(if mixed {
-                    "−"
-                } else if all {
-                    "✓"
-                } else {
-                    ""
-                })
+                .child(
+                    div()
+                        .size(rems(1.125))
+                        .flex_shrink_0()
+                        .border_1()
+                        .border_color(cx.theme().input)
+                        .rounded(px(4.))
+                        .text_size(px(14.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(if mixed {
+                            "−"
+                        } else if all {
+                            "✓"
+                        } else {
+                            ""
+                        }),
+                )
                 .on_change(move |state, _, _, cx| {
                     let _ = owner.update(cx, |table, cx| {
                         table
@@ -249,7 +257,10 @@ impl TableDelegate for Rows {
                 .items_center()
                 .child(
                     Checkbox::new(SharedString::from(format!("select:{id}")))
-                        .small()
+                        .large()
+                        .size(px(28.))
+                        .items_center()
+                        .justify_center()
                         .checked(self.selected.contains(&id))
                         .accessibility_label(format!("Select {}", record.name))
                         .on_change(move |checked, _, cx| {
