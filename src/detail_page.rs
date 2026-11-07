@@ -98,6 +98,7 @@ impl DetailTarget {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum DetailTab {
     Overview,
+    Data,
     Logs,
     Yaml,
     Events,
@@ -120,8 +121,13 @@ pub struct DetailPage {
     log_text: String,
     additional: bool,
     context: String,
+    pub(crate) cluster_name: String,
     focus: FocusHandle,
     scrolls: [ScrollHandle; 4],
+    pub(crate) data_editor: Option<Entity<crate::data_editor::DataEditor>>,
+    seen_data_revision: u64,
+    data_subscription: Option<gpui::Subscription>,
+    pub(crate) output: Option<Entity<crate::inspector::PanelState>>,
     yaml_editors: HashMap<&'static str, Entity<EditorState>>,
     _poll: Task<()>,
 }
@@ -164,9 +170,14 @@ impl DetailPage {
             log_text: String::new(),
             additional: false,
             context: document.context.to_string(),
+            cluster_name: document.context.to_string(),
             focus: cx.focus_handle(),
             scrolls: std::array::from_fn(|_| ScrollHandle::new()),
             yaml_editors: HashMap::new(),
+            data_editor: None,
+            data_subscription: None,
+            seen_data_revision: 0,
+            output: None,
             _poll: poll,
         }
     }
@@ -189,6 +200,9 @@ impl DetailPage {
         }
         self.visible = visible;
         if !visible {
+            if let Some(data) = &self.data_editor {
+                data.update(cx, |data, cx| data.hide(cx));
+            }
             self.stop_logs();
             self.pods_job = None;
             self.revealed = false;
@@ -205,7 +219,36 @@ impl DetailPage {
         }
     }
     fn poll(&mut self, cx: &mut Context<Self>) {
+        if let Some(data) = &self.data_editor {
+            data.update(cx, |data, cx| data.poll(cx));
+        }
         let mut changed = false;
+        let (revision, updates) = self.backend.data_updates(self.seen_data_revision);
+        self.seen_data_revision = revision;
+        for update in updates {
+            if update.connection == self.target.cluster
+                && update.object["metadata"]["uid"] == self.target.seed["metadata"]["uid"]
+                && self.detail.as_ref().is_some_and(|d| {
+                    d.object["metadata"]["resourceVersion"] == update.before_version
+                        || d.object["metadata"]["resourceVersion"]
+                            == update.object["metadata"]["resourceVersion"]
+                })
+            {
+                if let Some(data) = &self.data_editor {
+                    data.update(cx, |data, cx| data.accept_external(&update.object, cx));
+                }
+                if let Some(detail) = &mut self.detail
+                    && (detail.object["metadata"]["resourceVersion"] == update.before_version
+                        || detail.object["metadata"]["resourceVersion"]
+                            == update.object["metadata"]["resourceVersion"])
+                {
+                    detail.object = update.object;
+                }
+                self.revealed = false;
+                self.yaml_editors.clear();
+                changed = true;
+            }
+        }
         if let Some(result) = self.job.as_mut().and_then(Job::take) {
             self.job = None;
             self.accept_detail(result, cx);
@@ -264,7 +307,11 @@ impl DetailPage {
     }
     fn accept_detail(&mut self, result: Result<Detail, String>, cx: &mut Context<Self>) {
         match result {
-            Ok(detail) => {
+            Ok(mut detail) => {
+                self.backend.overlay_data(
+                    &self.target.cluster,
+                    std::slice::from_mut(&mut detail.object),
+                );
                 self.detail = Some(detail);
                 self.status = "Read-only".into();
                 if self.visible && self.tab == DetailTab::Logs {
@@ -283,6 +330,72 @@ impl DetailPage {
                 };
             }
         }
+    }
+    pub fn permit_close(&self, window: &mut Window, cx: &mut App) -> Task<bool> {
+        self.data_editor
+            .as_ref()
+            .map(|data| data.update(cx, |data, cx| data.permit_close(window, cx)))
+            .unwrap_or_else(|| Task::ready(true))
+    }
+    fn request_refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let permission = self.permit_close(window, cx);
+        cx.spawn_in(window, async move |owner, cx| {
+            if permission.await {
+                let _ = owner.update(cx, |this, cx| {
+                    this.data_editor = None;
+                    this.data_subscription = None;
+                    this.refresh(cx);
+                });
+            }
+        })
+        .detach();
+    }
+    fn data_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        if self.data_editor.is_none() {
+            if self.job.is_some() {
+                return div().p_4().child(self.status.clone()).into_any_element();
+            }
+            let Some(detail) = &self.detail else {
+                return div().p_4().child(self.status.clone()).into_any_element();
+            };
+            if let Err(error) =
+                crate::backend::data::DataTarget::from_object(&self.target.key, &detail.object)
+                    .and_then(|target| {
+                        crate::backend::data::DataValues::read(target.kind, &detail.object)
+                    })
+            {
+                return div().p_4().child(error).into_any_element();
+            }
+            let data = cx.new(|cx| {
+                crate::data_editor::DataEditor::new(
+                    &self.target,
+                    self.cluster_name.clone(),
+                    &detail.object,
+                    self.backend.clone(),
+                    self.output.clone(),
+                    window,
+                    cx,
+                )
+                .expect("validated data document")
+            });
+            self.data_subscription = Some(cx.subscribe(
+                &data,
+                |this, _, event: &crate::data_editor::DataApplied, cx| {
+                    if let Some(detail) = &mut this.detail {
+                        detail.object = event.0.clone();
+                    }
+                    this.revealed = false;
+                    this.yaml_editors.clear();
+                    cx.notify();
+                },
+            ));
+            self.data_editor = Some(data);
+        }
+        self.data_editor
+            .as_ref()
+            .unwrap()
+            .clone()
+            .into_any_element()
     }
     fn refresh(&mut self, cx: &mut Context<Self>) {
         self.stop_logs();
@@ -309,6 +422,13 @@ impl DetailPage {
         }
         self.stop_logs();
         self.pods_job = None;
+        if self.tab == DetailTab::Data || tab == DetailTab::Data {
+            self.revealed = false;
+            self.yaml_editors.clear();
+            if let Some(data) = &self.data_editor {
+                data.update(cx, |data, cx| data.hide(cx));
+            }
+        }
         self.tab = tab;
         if tab == DetailTab::Logs {
             self.load_pods(cx);
@@ -950,12 +1070,17 @@ impl Render for DetailPage {
                     .children(
                         [
                             (DetailTab::Overview, "Overview"),
+                            (DetailTab::Data, "Data"),
                             (DetailTab::Logs, "Logs"),
                             (DetailTab::Yaml, "YAML"),
                             (DetailTab::Events, "Events"),
                         ]
                         .into_iter()
-                        .filter(|(tab, _)| *tab != DetailTab::Logs || self.target.logs_supported())
+                        .filter(|(tab, _)| {
+                            (*tab != DetailTab::Logs || self.target.logs_supported())
+                                && (*tab != DetailTab::Data
+                                    || matches!(self.target.key.as_str(), "secrets" | "configmaps"))
+                        })
                         .map(|(tab, label)| {
                             Button::new(SharedString::from(format!("detail-tab:{label}")))
                                 .label(label)
@@ -972,7 +1097,8 @@ impl Render for DetailPage {
                     )
                     .child(div().flex_1())
                     .when(
-                        matches!(self.target.key.as_str(), "secrets" | "helm"),
+                        matches!(self.target.key.as_str(), "secrets" | "helm")
+                            && self.tab != DetailTab::Data,
                         |d| {
                             d.child(
                                 Button::new("reveal-values")
@@ -997,7 +1123,9 @@ impl Render for DetailPage {
                             .icon(IconName::RefreshCw)
                             .label("Refresh")
                             .small()
-                            .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.request_refresh(window, cx)),
+                            ),
                     ),
             )
             .child(
@@ -1008,10 +1136,19 @@ impl Render for DetailPage {
                     .py_2()
                     .text_size(px(11.))
                     .text_color(cx.theme().muted_foreground)
-                    .child(format!("{} · {}", self.context, self.status)),
+                    .child(format!(
+                        "{} · {}",
+                        self.context,
+                        if self.tab == DetailTab::Data && self.status == "Read-only" {
+                            "Limited editing · Data only"
+                        } else {
+                            &self.status
+                        }
+                    )),
             )
             .child(match self.tab {
                 DetailTab::Overview => self.overview(window, cx),
+                DetailTab::Data => self.data_view(window, cx),
                 DetailTab::Logs => self.logs_view(cx),
                 DetailTab::Yaml => {
                     let text = self

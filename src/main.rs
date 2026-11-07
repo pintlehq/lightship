@@ -31,7 +31,9 @@ gpui::actions!(lightship, [Quit, Search, ToggleSidebar, TogglePanel]);
 
 mod backend;
 mod catalog;
+mod confirm;
 mod connections;
+mod data_editor;
 mod detail_page;
 mod inspector;
 mod onboarding;
@@ -51,6 +53,8 @@ struct Lightship {
     detail_routes: Routes,
     panel_state: Entity<PanelState>,
     panel_focus: FocusHandle,
+    closing: bool,
+    close_task: Option<gpui::Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 impl Lightship {
@@ -70,14 +74,27 @@ impl Lightship {
         let detail_routes: Routes = Rc::new(RefCell::new(HashMap::new()));
         let routes = detail_routes.clone();
         let page_panel = panel_state.clone();
+        let page_connections = connections.clone();
         let workspace = cx.new(|cx| {
             Workspace::new(
                 Rc::new(move |document, window, cx| {
                     if let Some(target) = routes.borrow().get(document.key.0.as_ref()).cloned() {
-                        return WorkspacePage::new(
-                            cx.new(|cx| DetailPage::new(target, document, backend.clone(), cx)),
-                            cx,
-                        );
+                        let cluster_name = page_connections
+                            .read(cx)
+                            .settings
+                            .connections
+                            .iter()
+                            .find(|c| c.id == target.cluster)
+                            .map(|c| c.name.clone())
+                            .unwrap_or_else(|| document.context.to_string());
+                        let page =
+                            cx.new(|cx| DetailPage::new(target, document, backend.clone(), cx));
+                        page.update(cx, |page, _| page.cluster_name = cluster_name);
+                        page.update(cx, |page, _| page.output = Some(page_panel.clone()));
+                        let guard = page.clone();
+                        return WorkspacePage::new(page, cx).before_close(move |window, cx| {
+                            guard.update(cx, |page, cx| page.permit_close(window, cx))
+                        });
                     }
                     if document
                         .key
@@ -109,6 +126,33 @@ impl Lightship {
                 cx,
             )
         });
+        let close_owner = cx.weak_entity();
+        window.on_window_should_close(cx, move |window, cx| {
+            let _ = close_owner.update(cx, |this, cx| this.request_close(false, window, cx));
+            false
+        });
+        let close_workspace = workspace.downgrade();
+        connections.update(cx, |manager, _| {
+            manager.before_remove = Some(Rc::new(move |id, window, cx| {
+                let Some(workspace) = close_workspace.upgrade() else {
+                    return gpui::Task::ready(true);
+                };
+                let prefix = format!("{id}/");
+                let ids = workspace
+                    .read(cx)
+                    .groups(cx)
+                    .into_iter()
+                    .flat_map(|g| g.views)
+                    .filter(|id| {
+                        workspace
+                            .read(cx)
+                            .document(*id, cx)
+                            .is_some_and(|d| d.key.0.starts_with(&prefix))
+                    })
+                    .collect::<Vec<_>>();
+                workspace.update(cx, |w, cx| w.confirm_close(&ids, window, cx))
+            }))
+        });
         let navigation = cx.new(|cx| {
             NavigationTree::with_options(
                 connections.read(cx).navigation(),
@@ -135,7 +179,7 @@ impl Lightship {
                                     .text_size(px(10.))
                                     .text_color(cx.theme().muted_foreground)
                                     .child(if status.starts_with("Connected") {
-                                        "● Read-only"
+                                        "● Connected"
                                     } else if status.starts_with("Connecting") {
                                         "Connecting…"
                                     } else {
@@ -288,7 +332,19 @@ impl Lightship {
                                 .page(view, cx)
                                 .and_then(|p| p.downcast::<DetailPage>().ok())
                         {
-                            page.update(cx, |page, cx| page.rename(&document, cx));
+                            page.update(cx, |page, cx| {
+                                page.rename(&document, cx);
+                                if let Some(connection) =
+                                    connections.iter().find(|c| c.id == page.target.cluster)
+                                {
+                                    page.cluster_name = connection.name.clone();
+                                    if let Some(data) = &page.data_editor {
+                                        data.update(cx, |data, cx| {
+                                            data.rename_context(connection.name.clone(), cx)
+                                        });
+                                    }
+                                }
+                            });
                         }
                         if let Some(document) = workspace.document(view, cx)
                             && let Some(page) = workspace
@@ -326,6 +382,8 @@ impl Lightship {
             detail_routes,
             panel_state,
             panel_focus: cx.focus_handle(),
+            closing: false,
+            close_task: None,
             _subscriptions: vec![
                 nav,
                 layout_sub,
@@ -344,6 +402,37 @@ impl Lightship {
             CommandEntry::new("toggle-panel", "Commands", "Toggle Panel"),
             CommandEntry::new("toggle-theme", "Commands", "Toggle Appearance"),
         ]
+    }
+    fn request_close(&mut self, quit: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.closing {
+            return;
+        }
+        self.closing = true;
+        let ids = self
+            .workspace
+            .read(cx)
+            .groups(cx)
+            .into_iter()
+            .flat_map(|g| g.views)
+            .collect::<Vec<_>>();
+        let permission = self
+            .workspace
+            .update(cx, |w, cx| w.confirm_close(&ids, window, cx));
+        self.close_task = Some(cx.spawn_in(window, async move |owner, cx| {
+            let allowed = permission.await;
+            let _ = cx.update(|window, cx| {
+                owner.update(cx, |this, cx| {
+                    this.closing = false;
+                    if allowed {
+                        if quit {
+                            cx.quit();
+                        } else {
+                            window.remove_window();
+                        }
+                    }
+                })
+            });
+        }));
     }
     fn add_cluster(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         #[cfg(not(test))]
@@ -410,7 +499,7 @@ impl Lightship {
         window.open_dialog(cx, move |dialog, _, cx| {
             let return_focus = return_focus.clone();
             dialog
-                .title("Manage clusters · Read-only")
+                .title("Manage clusters · Limited data editing")
                 .width(px(720.))
                 .centered()
                 .font_family(cx.theme().mono_font_family.clone())
@@ -603,6 +692,10 @@ impl Render for Lightship {
         div()
             .size_full()
             .key_context("Lightship")
+            .on_action(cx.listener(|this, _: &Quit, window, cx| {
+                cx.stop_propagation();
+                this.request_close(true, window, cx);
+            }))
             .on_action(cx.listener(|this, _: &Search, window, cx| this.search(window, cx)))
             .on_action(
                 cx.listener(|this, _: &ToggleSidebar, window, cx| this.toggle_sidebar(window, cx)),
@@ -621,7 +714,7 @@ impl Render for Lightship {
                             .items_center()
                             .justify_center()
                             .gap_4()
-                            .child("Lightship · Kubernetes, read-only")
+                            .child("Lightship · Kubernetes, limited data editing")
                             .child("Add a cluster to browse resources, events and logs.")
                             .child(
                                 Button::new("add-first-cluster")
@@ -639,7 +732,7 @@ impl Render for Lightship {
                 .activity(activity)
                 .sidebar(chrome::sidebar(
                     "lightship-sidebar",
-                    "Clusters · Read-only",
+                    "Clusters · Limited editing",
                     div()
                         .size_full()
                         .min_h_0()
@@ -668,7 +761,7 @@ impl Render for Lightship {
                 .panel(self.panel(cx))
                 .status(chrome::status_bar(
                     "Lightship",
-                    "Read-only · No cluster mutations",
+                    "Limited editing · Secret/ConfigMap data",
                     cx,
                 )),
             )

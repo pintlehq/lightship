@@ -336,6 +336,7 @@ pub(crate) fn mock_backend_on(
             runtime,
             sessions: Mutex::new(HashMap::new()),
             overviews: Mutex::new(HashMap::new()),
+            data_updates: Mutex::default(),
         }),
         handler,
     )

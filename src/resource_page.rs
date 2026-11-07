@@ -433,6 +433,7 @@ pub struct ResourcePage {
     backend: Arc<Backend>,
     job: Job<Snapshot>,
     title: String,
+    seen_data_revision: u64,
     _poll: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
@@ -477,11 +478,49 @@ impl ResourcePage {
                 timer.timer(Duration::from_millis(100)).await;
                 if entity
                     .update(cx, |this, cx| {
+                        let (revision, updates) =
+                            this.backend.data_updates(this.seen_data_revision);
+                        this.seen_data_revision = revision;
+                        if !updates.is_empty() {
+                            this.table.update(cx, |table, cx| {
+                                let rows = table.delegate_mut();
+                                let mut changed = false;
+                                for update in updates {
+                                    if update.connection != rows.cluster {
+                                        continue;
+                                    }
+                                    if let Some(object) = rows.objects.values_mut().find(|o| {
+                                        o["metadata"]["uid"] == update.object["metadata"]["uid"]
+                                            && (o["metadata"]["resourceVersion"]
+                                                == update.before_version
+                                                || o["metadata"]["resourceVersion"]
+                                                    == update.object["metadata"]["resourceVersion"])
+                                    }) {
+                                        *object = update.object;
+                                        changed = true;
+                                    }
+                                }
+                                if changed {
+                                    let objects = rows
+                                        .rows
+                                        .iter()
+                                        .filter_map(|row| rows.objects.get(&row.id).cloned())
+                                        .collect();
+                                    let status = rows.status.clone();
+                                    rows.replace(Snapshot { objects, status });
+                                    cx.notify();
+                                }
+                            });
+                        }
                         if let Some(result) = this.job.take() {
                             this.table.update(cx, |table, cx| {
                                 let rows = table.delegate_mut();
                                 match result {
-                                    Ok(snapshot) => rows.replace(snapshot),
+                                    Ok(mut snapshot) => {
+                                        this.backend
+                                            .overlay_data(&rows.cluster, &mut snapshot.objects);
+                                        rows.replace(snapshot);
+                                    }
                                     Err(e) => {
                                         rows.status = if rows.rows.is_empty() {
                                             e
@@ -504,6 +543,7 @@ impl ResourcePage {
             table,
             filter,
             compact_actions: false,
+            seen_data_revision: 0,
             action_focus: std::array::from_fn(|_| cx.focus_handle()),
             backend,
             job,

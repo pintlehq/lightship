@@ -1,5 +1,6 @@
-//! Read-only Kubernetes service. Raw clients and URLs never leave this module.
+//! Kubernetes service with a narrow data-editing boundary. Raw clients never leave this module.
 pub mod config;
+pub mod data;
 mod details;
 pub mod overview;
 mod policy;
@@ -117,6 +118,7 @@ impl<T: Clone> Drop for Job<T> {
 pub struct Backend {
     runtime: tokio::runtime::Handle,
     sessions: Mutex<HashMap<String, Arc<Session>>>,
+    data_updates: Mutex<data::DataUpdates>,
     overviews: Mutex<HashMap<String, Arc<overview::OverviewHub>>>,
 }
 struct Session {
@@ -142,6 +144,7 @@ impl Backend {
                 .clone(),
             sessions: Mutex::new(HashMap::new()),
             overviews: Mutex::new(HashMap::new()),
+            data_updates: Mutex::default(),
         })
     }
     fn job<T: Clone + Send + Sync + 'static>(
@@ -228,7 +231,7 @@ impl Backend {
                     specs: specs.clone(),
                     policy,
                     cancelled: watch::channel(false).0,
-                    health: Mutex::new("Connected · Read-only".into()),
+                    health: Mutex::new("Connected".into()),
                 }),
             );
             if let Some(hub) = backend.overviews.lock().unwrap().get(&id) {
@@ -238,6 +241,11 @@ impl Backend {
         })
     }
     pub fn disconnect(&self, id: &str) {
+        self.data_updates
+            .lock()
+            .unwrap()
+            .items
+            .retain(|(_, update)| update.connection != id);
         if let Some(hub) = self.overviews.lock().unwrap().remove(id) {
             hub.invalidate();
         }
@@ -395,8 +403,8 @@ impl Session {
     async fn json(&self, path: &str) -> Result<Value, String> {
         let result = self.client.request(get(path)).await;
         *self.health.lock().unwrap() = match &result {
-            Ok(_) => "Connected · Read-only".into(),
-            Err(kube::Error::Api(e)) if e.code != 401 => "Connected · Read-only".into(),
+            Ok(_) => "Connected".into(),
+            Err(kube::Error::Api(e)) if e.code != 401 => "Connected".into(),
             Err(_) => "Disconnected · check credentials or network".into(),
         };
         result.map_err(error)

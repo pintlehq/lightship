@@ -886,3 +886,171 @@ fn overview_partial_errors_do_not_show_fake_zeroes_or_hide_other_cards(cx: &mut 
         assert!(!window.find_all("overview-recent-events").is_empty());
     });
 }
+
+#[gpui_kit::test]
+fn data_draft_keeps_tab_navigation_and_guards_close_and_quit(cx: &mut TestAppContext) {
+    use pintle_gpui_kit::shell::workspace::{CloseScope, OpenMode};
+    let (handle, app) = open(cx);
+    let workspace = cx.update(|cx| app.read(cx).workspace.clone());
+    step(cx, handle, |window, cx| {
+        let object = serde_json::json!({"kind":"ConfigMap","metadata":{"name":"config","namespace":"apps","uid":"cm-id","resourceVersion":"1"},"data":{"config.yaml":"replicas: 1\n"}});
+        app.update(cx, |app, cx| {
+            app.open_resource(
+                &Inspect {
+                    cluster: "Development".into(),
+                    key: "configmaps".into(),
+                    object: object.clone(),
+                },
+                window,
+                cx,
+            )
+        });
+        active_detail(&app, cx).update(cx, |page, cx| {
+            page.set_test_detail(object, serde_json::json!({"items":[]}), cx)
+        });
+    });
+    step(cx, handle, |window, cx| window.click("detail-tab:Data", cx));
+    step(cx, handle, |window, cx| {
+        window.click_at("data-value-editor", point(px(90.), px(18.)), cx);
+        window.press("secondary-a", cx);
+        window.input("replicas: 2", cx);
+    });
+    cx.run_until_parked();
+    let detail = cx.update(|cx| active_detail(&app, cx));
+    let view = cx.update(|cx| workspace.read(cx).active_view(cx).unwrap());
+    cx.update(|cx| {
+        assert!(
+            detail
+                .read(cx)
+                .data_editor
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .dirty()
+        )
+    });
+    step(cx, handle, |window, cx| {
+        workspace.update(cx, |w, cx| {
+            w.open(
+                pintle_gpui_kit::shell::workspace::Document::new(
+                    "Development/services",
+                    "Services",
+                    "Development",
+                ),
+                OpenMode::Permanent,
+                window,
+                cx,
+            );
+        })
+    });
+    step(cx, handle, |window, cx| {
+        assert!(window.find_all("confirm-accept").is_empty());
+        workspace.update(cx, |w, cx| w.select(view, window, cx));
+    });
+    step(cx, handle, |window, cx| {
+        workspace.update(cx, |w, cx| w.close(view, CloseScope::One, window, cx));
+    });
+    cx.run_until_parked();
+    step(cx, handle, |window, cx| {
+        assert!(workspace.read(cx).page(view, cx).is_some());
+        window.click("confirm-cancel", cx);
+    });
+    cx.run_until_parked();
+    step(cx, handle, |window, cx| {
+        window.press("secondary-q", cx);
+    });
+    cx.run_until_parked();
+    step(cx, handle, |window, cx| {
+        assert!(!window.find_all("confirm-accept").is_empty());
+        window.click("confirm-cancel", cx);
+    });
+    cx.run_until_parked();
+    step(cx, handle, |window, cx| {
+        assert!(!app.read(cx).closing);
+        workspace.update(cx, |w, cx| w.close(view, CloseScope::One, window, cx));
+    });
+    cx.run_until_parked();
+    step(cx, handle, |window, cx| window.click("confirm-accept", cx));
+    cx.run_until_parked();
+    cx.update(|cx| assert!(workspace.read(cx).page(view, cx).is_none()));
+}
+
+#[gpui_kit::test]
+fn removing_connection_confirms_data_drafts_before_changing_settings(cx: &mut TestAppContext) {
+    let (handle, app) = open(cx);
+    step(cx, handle, |window, cx| {
+        let object = serde_json::json!({"kind":"ConfigMap","metadata":{"name":"config","namespace":"apps","uid":"cm-id","resourceVersion":"1"},"data":{"config.yaml":"replicas: 1\n"}});
+        app.update(cx, |app, cx| {
+            app.open_resource(
+                &Inspect {
+                    cluster: "Development".into(),
+                    key: "configmaps".into(),
+                    object: object.clone(),
+                },
+                window,
+                cx,
+            )
+        });
+        active_detail(&app, cx).update(cx, |page, cx| {
+            page.set_test_detail(object, serde_json::json!({"items":[]}), cx)
+        });
+    });
+    step(cx, handle, |window, cx| window.click("detail-tab:Data", cx));
+    step(cx, handle, |window, cx| {
+        window.click_at("data-value-editor", point(px(90.), px(18.)), cx);
+        window.press("secondary-a", cx);
+        window.input("replicas: 2", cx);
+    });
+    cx.run_until_parked();
+    let detail = cx.update(|cx| active_detail(&app, cx));
+    step(cx, handle, |window, cx| {
+        app.update(cx, |app, cx| app.manage_clusters(window, cx))
+    });
+    step(cx, handle, |window, cx| {
+        window.click("remove:Development", cx)
+    });
+    cx.run_until_parked();
+    step(cx, handle, |window, cx| {
+        assert_eq!(
+            app.read(cx).connections.read(cx).settings.connections.len(),
+            1
+        );
+        window.click("confirm-cancel", cx);
+    });
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert!(
+            detail
+                .read(cx)
+                .data_editor
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .dirty()
+        )
+    });
+    step(cx, handle, |window, cx| {
+        window.click("remove:Development", cx)
+    });
+    cx.run_until_parked();
+    step(cx, handle, |window, cx| window.click("confirm-accept", cx));
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert!(
+            app.read(cx)
+                .connections
+                .read(cx)
+                .settings
+                .connections
+                .is_empty()
+        );
+        assert!(
+            app.read(cx)
+                .workspace
+                .read(cx)
+                .groups(cx)
+                .iter()
+                .all(|g| g.views.is_empty())
+        );
+    });
+}

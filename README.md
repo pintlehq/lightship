@@ -1,6 +1,6 @@
 # Lightship
 
-A read-only Kubernetes desktop application, using the public `pintle_gpui_kit`
+A Kubernetes desktop application with limited Secret/ConfigMap data editing, using the public `pintle_gpui_kit`
 facade. Rust **1.99.0**, GPUI Kit **0.8.1**, and the kit's verified Git revision
 remain pinned. The installed Electron `/Applications/Lightship.app` is a reference;
 this application has a separate identity and settings directory.
@@ -86,15 +86,33 @@ required; insecure TLS and endpoint URL path prefixes are not supported.
 - Secrets and potentially sensitive Helm payloads are hidden until **Reveal**.
   Hiding/closing its document resets reveal state. No payload is logged.
 - Checkboxes offer **Copy names** and clear selection only. There is no create,
-  edit, delete, scale, restart, exec, attach, terminal, proxy or port-forward command.
+  bulk edit, delete, scale, restart, exec, attach, terminal, proxy or port-forward command.
 
-The HTTP boundary rejects non-GET methods, unregistered resource paths and unsafe
-subresources, independently of UI controls. Discovery, list/watch, resource details,
-Pod logs and metrics use that same boundary. Pages list all pages of results, then
-watch with reconnect/backoff; denied watches fall back to polling every 30 seconds.
-Overview and Helm refresh every 30 seconds. Closing pages cancels their jobs;
-removing/reconnecting a cluster revokes the old session. Errors preserve existing
-rows with a stale indicator rather than presenting a false empty result.
+The HTTP boundary allows GET for registered discovery/resource paths and Pod logs.
+All other writes remain blocked except exact, typed JSON Patch requests produced
+by the Data editor for a namespaced Secret or ConfigMap. The boundary verifies the
+sealed request's method, target, content type and payload digest. UID and
+resourceVersion tests make the patch conditional; type, metadata and immutable
+flags are never edited. There is no terminal, exec, attach, proxy or port-forward.
+
+## Edit Secret and ConfigMap data
+
+Open a resource's **Data** tab to select a key, edit its name/value, add fields or
+upload a file into the selected key. Secret values start hidden; Reveal is local
+to the current key, and switching keys/tabs hides the value and clears editor undo
+history. Binary fields use Base64 without lossy decoding. YAML/JSON values use
+syntax highlighting; other values use plain text. Existing keys have no Delete
+operation. Immutable resources remain read-only.
+
+Drafts are memory-only and independent per document/split. Reset discards local
+edits after confirmation. Apply reviews changed key names (never Secret values),
+then writes only resource data. RBAC and version conflicts preserve the draft;
+there is no force overwrite or automatic write retry. Uncertain results are read
+back before a manual retry can be offered. Closing documents, removing a
+connection and normal window/quit actions confirm before discarding drafts.
+Other views receive successful updates without overwriting their own drafts.
+Activity Output contains targets/counts/status only, never values or API bodies.
+Data-write tests use mock servers exclusively; live smoke tests remain read-only.
 
 ## Build and validate
 

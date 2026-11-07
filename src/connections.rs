@@ -3,6 +3,7 @@ use crate::backend::{
     Backend, Job, Spec,
     config::{self, Connection, Settings, Source},
 };
+use futures::FutureExt;
 use gpui::component::{
     ActiveTheme, Sizable,
     button::{Button, ButtonVariants},
@@ -18,6 +19,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+type RemoveGuard = std::rc::Rc<dyn Fn(&str, &mut Window, &mut App) -> Task<bool>>;
 pub struct Connections {
     pub backend: Arc<Backend>,
     pub settings: Settings,
@@ -29,6 +31,8 @@ pub struct Connections {
     rename: Entity<InputState>,
     pub error: String,
     persistence_ok: bool,
+    pub before_remove: Option<RemoveGuard>,
+    remove_task: Option<Task<()>>,
     _poll: Task<()>,
 }
 impl Connections {
@@ -61,6 +65,8 @@ impl Connections {
             rename,
             error,
             persistence_ok,
+            before_remove: None,
+            remove_task: None,
             _poll: poll,
         };
         for connection in result.settings.connections.clone() {
@@ -75,8 +81,7 @@ impl Connections {
                 match result {
                     Ok(specs) => {
                         self.specs.insert(id.clone(), specs);
-                        self.status
-                            .insert(id.clone(), "Connected · Read-only".into());
+                        self.status.insert(id.clone(), "Connected".into());
                     }
                     Err(e) => {
                         self.status.insert(id.clone(), e);
@@ -157,7 +162,7 @@ impl Connections {
         self.settings.dark = dark;
         self.persist();
     }
-    /// Persist an already reviewed import atomically, then start read-only connections.
+    /// Persist an already reviewed import atomically, then start connections with limited data editing.
     pub fn import(
         &mut self,
         source: Option<&Source>,
@@ -225,6 +230,32 @@ impl Connections {
         }
         cx.notify();
         Ok(())
+    }
+    fn request_remove(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if self.remove_task.is_some() {
+            return;
+        }
+        let mut permission = self
+            .before_remove
+            .as_ref()
+            .map(|guard| guard(id, window, cx))
+            .unwrap_or_else(|| Task::ready(true));
+        if permission.is_ready() {
+            if (&mut permission).now_or_never() == Some(true) {
+                self.remove(id, cx);
+            }
+            return;
+        }
+        let id = id.to_string();
+        self.remove_task = Some(cx.spawn(async move |owner, cx| {
+            let allowed = permission.await;
+            let _ = owner.update(cx, |this, cx| {
+                this.remove_task = None;
+                if allowed {
+                    this.remove(&id, cx);
+                }
+            });
+        }));
     }
     fn remove(&mut self, id: &str, cx: &mut Context<Self>) {
         let old = self.settings.connections.clone();
@@ -448,9 +479,9 @@ impl Render for Connections {
                                     .label("Remove from app")
                                     .small()
                                     .ghost()
-                                    .on_click(
-                                        cx.listener(move |this, _, _, cx| this.remove(&remove, cx)),
-                                    ),
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.request_remove(&remove, window, cx)
+                                    })),
                             ),
                     )
                     .when(!plugin.is_empty(), |d| {
