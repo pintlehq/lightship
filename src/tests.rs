@@ -378,7 +378,12 @@ fn bulk_overlay_preserves_viewport_scroll_and_pointer_targets(cx: &mut TestAppCo
         window.click_at("resource-table-viewport", position, cx);
     });
     step(cx, handle, |_, cx| {
-        assert!(app.read(cx).layout.read(cx).panel_visible)
+        assert!(!app.read(cx).layout.read(cx).panel_visible);
+        let workspace = app.read(cx).workspace.read(cx);
+        let page = workspace
+            .page(workspace.active_view(cx).unwrap(), cx)
+            .unwrap();
+        assert!(page.downcast::<DetailPage>().is_ok());
     });
 }
 
@@ -414,5 +419,298 @@ fn refresh_updates_stable_ids_and_retains_filter_sort_selection(cx: &mut TestApp
         assert!(rows.selected.contains(&id));assert_eq!(rows.rows[0].cells[2].text,"2/2");assert_eq!(rows.visible.len(),1);assert_eq!(rows.query,"APP");assert!(rows.sort.is_some());
         rows.replace(backend::Snapshot{objects:vec![],status:"Read-only".into()});assert!(rows.selected.is_empty());cx.notify();
     })
+    });
+}
+
+fn active_detail(app: &Entity<Lightship>, cx: &App) -> Entity<DetailPage> {
+    let workspace = app.read(cx).workspace.read(cx);
+    workspace
+        .page(workspace.active_view(cx).unwrap(), cx)
+        .unwrap()
+        .downcast::<DetailPage>()
+        .unwrap()
+}
+fn resource_cell(page: &Entity<ResourcePage>, cx: &App) -> String {
+    let rows = page.read(cx).table.read(cx).delegate();
+    format!("resource-cell:{}:1", rows.rows[rows.visible[0]].id)
+}
+fn deployment_detail() -> serde_json::Value {
+    serde_json::json!({"apiVersion":"apps/v1","kind":"Deployment","metadata":{"name":"api","namespace":"apps","uid":"deployment-uid","creationTimestamp":"2026-10-01T00:00:00Z","labels":{"app":"api"},"annotations":{"description":"Application"}},"spec":{"replicas":2,"template":{"spec":{"containers":[{"name":"main","ports":[{"containerPort":3001}]}]}}},"status":{"readyReplicas":1,"updatedReplicas":2,"availableReplicas":1,"conditions":[{"type":"Available","status":"True"}]}})
+}
+#[gpui_kit::test]
+fn row_click_opens_permanent_details_reuses_tab_and_retains_list(cx: &mut TestAppContext) {
+    let (handle, app) = open(cx);
+    let workspace = cx.update(|cx| app.read(cx).workspace.clone());
+    let (list, page) = cx.update(|cx| {
+        (
+            workspace.read(cx).active_view(cx).unwrap(),
+            active_page(&app, cx),
+        )
+    });
+    let table = cx.update(|cx| page.read(cx).table.clone());
+    step(cx, handle, |window, cx| {
+        table.update(cx, |table, cx| {
+            let rows = table.delegate_mut();
+            rows.query = "development".into();
+            rows.namespace = Some("apps".into());
+            rows.sort = Some((1, ColumnSort::Descending));
+            rows.rebuild();
+            let id = rows.rows[rows.visible[0]].id.clone();
+            rows.selected.insert(id);
+            cx.notify();
+        });
+        window.click(resource_cell(&page, cx), cx);
+    });
+    let detail = cx.update(|cx| workspace.read(cx).active_view(cx).unwrap());
+    step(cx, handle, |window, cx| {
+        assert_ne!(detail, list);
+        assert!(!workspace.read(cx).is_preview(detail, cx));
+        assert!(
+            workspace
+                .read(cx)
+                .page(detail, cx)
+                .unwrap()
+                .downcast::<DetailPage>()
+                .is_ok()
+        );
+        assert_eq!(workspace.read(cx).groups(cx)[0].views.len(), 2);
+        assert!(!app.read(cx).layout.read(cx).panel_visible);
+        workspace.update(cx, |w, cx| w.select(list, window, cx));
+    });
+    step(cx, handle, |window, cx| {
+        let rows = table.read(cx).delegate();
+        assert_eq!(rows.query, "development");
+        assert_eq!(rows.namespace.as_deref(), Some("apps"));
+        assert_eq!(rows.selected.len(), 1);
+        assert!(rows.sort.is_some());
+        window.click(resource_cell(&page, cx), cx);
+    });
+    step(cx, handle, |_, cx| {
+        assert_eq!(workspace.read(cx).active_view(cx), Some(detail));
+        assert_eq!(workspace.read(cx).groups(cx)[0].views.len(), 2);
+    });
+}
+#[gpui_kit::test]
+fn keyboard_selection_does_not_open_until_enter_and_menu_opens_details(cx: &mut TestAppContext) {
+    let (handle, app) = open(cx);
+    let workspace = cx.update(|cx| app.read(cx).workspace.clone());
+    let page = cx.update(|cx| active_page(&app, cx));
+    let list = cx.update(|cx| workspace.read(cx).active_view(cx).unwrap());
+    step(cx, handle, |window, cx| {
+        page.read(cx).table.focus_handle(cx).focus(window, cx);
+        window.press("down", cx);
+    });
+    step(cx, handle, |window, cx| {
+        assert_eq!(workspace.read(cx).active_view(cx), Some(list));
+        window.press("enter", cx);
+    });
+    step(cx, handle, |window, cx| {
+        assert!(
+            workspace
+                .read(cx)
+                .page(workspace.read(cx).active_view(cx).unwrap(), cx)
+                .unwrap()
+                .downcast::<DetailPage>()
+                .is_ok()
+        );
+        workspace.update(cx, |w, cx| w.select(list, window, cx));
+    });
+    step(cx, handle, |window, cx| {
+        let rows = page.read(cx).table.read(cx).delegate();
+        let id = rows.rows[rows.visible[1]].id.clone();
+        page.read(cx).table.clone().update(cx, |table, cx| {
+            table.scroll_to_col(table.delegate().resource.columns().len() + 1, cx);
+        });
+        window.render_frame(cx);
+        window.click(format!("actions:{id}"), cx);
+    });
+    step(cx, handle, |window, cx| {
+        window.press("down", cx);
+        window.press("enter", cx);
+    });
+    step(cx, handle, |_, cx| {
+        assert_eq!(workspace.read(cx).groups(cx)[0].views.len(), 3);
+        assert!(
+            active_detail(&app, cx)
+                .read(cx)
+                .target
+                .name()
+                .contains("development")
+        );
+    });
+}
+#[gpui_kit::test]
+fn detail_splits_keep_subtabs_independent_and_hide_secrets_when_hidden(cx: &mut TestAppContext) {
+    let (handle, app) = open(cx);
+    let workspace = cx.update(|cx| app.read(cx).workspace.clone());
+    step(cx, handle, |window, cx| {
+        let object = serde_json::json!({"kind":"Secret","metadata":{"name":"credentials","namespace":"apps","uid":"secret-uid"},"data":{"token":"private-value"}});
+        app.update(cx, |app, cx| {
+            app.open_resource(
+                &Inspect {
+                    cluster: "Development".into(),
+                    key: "secrets".into(),
+                    object: object.clone(),
+                },
+                window,
+                cx,
+            )
+        });
+        active_detail(&app, cx).update(cx, |page, cx| {
+            page.set_test_detail(object, serde_json::json!({"items":[]}), cx)
+        });
+    });
+    let first = cx.update(|cx| workspace.read(cx).active_view(cx).unwrap());
+    step(cx, handle, |window, cx| {
+        window.click("reveal-values", cx);
+        window.click("detail-tab:YAML", cx);
+        assert!(active_detail(&app, cx).read(cx).revealed);
+        workspace.update(cx, |w, cx| {
+            w.split(first, SplitDirection::Right, window, cx)
+        });
+    });
+    step(cx, handle, |window, cx| {
+        let second = active_detail(&app, cx);
+        assert!(!second.read(cx).revealed);
+        assert!(second.read(cx).tab == detail_page::DetailTab::Overview);
+        let left = workspace
+            .read(cx)
+            .page(first, cx)
+            .unwrap()
+            .downcast::<DetailPage>()
+            .unwrap();
+        assert!(left.read(cx).tab == detail_page::DetailTab::Yaml);
+        workspace.update(cx, |w, cx| {
+            w.select(first, window, cx);
+            let doc = catalog::RESOURCES
+                .iter()
+                .find(|r| r.key == "services")
+                .unwrap()
+                .document("Development");
+            w.open(doc, OpenMode::Permanent, window, cx);
+        });
+    });
+    step(cx, handle, |_, cx| {
+        let left = workspace
+            .read(cx)
+            .page(first, cx)
+            .unwrap()
+            .downcast::<DetailPage>()
+            .unwrap();
+        assert!(!left.read(cx).revealed);
+    });
+}
+#[gpui_kit::test]
+fn cluster_rename_and_removal_update_and_close_detail_documents(cx: &mut TestAppContext) {
+    let (handle, app) = open(cx);
+    let workspace = cx.update(|cx| app.read(cx).workspace.clone());
+    step(cx, handle, |window, cx| {
+        app.update(cx, |app, cx| {
+            app.open_resource(
+                &Inspect {
+                    cluster: "Development".into(),
+                    key: "deployments".into(),
+                    object: deployment_detail(),
+                },
+                window,
+                cx,
+            )
+        })
+    });
+    let detail = cx.update(|cx| workspace.read(cx).active_view(cx).unwrap());
+    step(cx, handle, |_, cx| {
+        app.read(cx).connections.clone().update(cx, |m, cx| {
+            m.settings.connections[0].name = "Renamed".into();
+            cx.notify();
+        });
+    });
+    step(cx, handle, |_, cx| {
+        assert!(
+            workspace
+                .read(cx)
+                .document(detail, cx)
+                .unwrap()
+                .context
+                .starts_with("Renamed / apps")
+        );
+        app.read(cx).connections.clone().update(cx, |m, cx| {
+            m.settings.connections.clear();
+            cx.notify();
+        });
+    });
+    step(cx, handle, |_, cx| {
+        assert!(workspace.read(cx).groups(cx).is_empty());
+        assert!(app.read(cx).detail_routes.borrow().is_empty());
+    });
+}
+#[gpui_kit::test]
+fn overview_rows_open_category_list_instead_of_synthetic_detail(cx: &mut TestAppContext) {
+    let (handle, app) = open(cx);
+    step(cx, handle, |window, cx| {
+        app.update(cx, |app, cx| {
+            app.open_resource(
+                &Inspect {
+                    cluster: "Development".into(),
+                    key: "overview".into(),
+                    object: serde_json::json!({"name":"Services","count":3}),
+                },
+                window,
+                cx,
+            )
+        })
+    });
+    step(cx, handle, |_, cx| {
+        assert_eq!(
+            active_page(&app, cx).read(cx).table.read(cx).delegate().key,
+            "services"
+        );
+        assert!(app.read(cx).detail_routes.borrow().is_empty());
+    });
+}
+#[gpui_kit::test]
+fn detail_cards_and_tabs_fit_both_themes_sizes_and_narrow_splits(cx: &mut TestAppContext) {
+    let (handle, app) = open(cx);
+    let workspace = cx.update(|cx| app.read(cx).workspace.clone());
+    step(cx, handle, |window, cx| {
+        app.update(cx, |app, cx| {
+            app.open_resource(
+                &Inspect {
+                    cluster: "Development".into(),
+                    key: "deployments".into(),
+                    object: deployment_detail(),
+                },
+                window,
+                cx,
+            )
+        });
+        active_detail(&app, cx).update(cx, |page, cx| {
+            page.set_test_detail(deployment_detail(), serde_json::json!({"items":[]}), cx)
+        });
+    });
+    for dimensions in [size(px(1440.), px(900.)), size(px(1024.), px(680.))] {
+        cx.simulate_window_resize(handle, dimensions);
+        for mode in [theme::ThemeMode::Light, theme::ThemeMode::Dark] {
+            cx.update(|cx| theme::set_mode(mode, cx));
+            step(cx, handle, |window, _| {
+                let page = window.find("resource-detail-page").bounds();
+                let header = window.find("resource-detail-tabs").bounds();
+                let summary = window.find("detail-summary").bounds();
+                assert!(header.bottom() < page.bottom());
+                assert!(summary.size.width <= page.size.width);
+                assert!(page.bottom() <= dimensions.height);
+                assert!(window.find_all("start-logs").is_empty());
+                assert!(!window.find_all("recent-events").is_empty());
+            });
+        }
+    }
+    step(cx, handle, |window, cx| {
+        let view = workspace.read(cx).active_view(cx).unwrap();
+        workspace.update(cx, |w, cx| w.split(view, SplitDirection::Right, window, cx));
+        active_detail(&app, cx).update(cx, |page, cx| {
+            page.set_test_detail(deployment_detail(), serde_json::json!({"items":[]}), cx)
+        });
+    });
+    step(cx, handle, |window, _| {
+        assert_eq!(window.find_all("resource-detail-page").len(), 2);
     });
 }

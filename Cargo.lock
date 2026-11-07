@@ -5461,7 +5461,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 [[package]]
 name = "pintle-gpui-components"
 version = "0.1.0"
-source = "git+https://github.com/pintlehq/pintle-gpui-kit?rev=2da5d9b7c485a46b3a2d49907bc36be4819ee252#2da5d9b7c485a46b3a2d49907bc36be4819ee252"
+source = "git+https://github.com/pintlehq/pintle-gpui-kit?rev=952b567619a2c3bc958b0c0a089ff5aea3c1dce2#952b567619a2c3bc958b0c0a089ff5aea3c1dce2"
 dependencies = [
  "gpui-kit",
  "pintle-gpui-theme",
@@ -5470,7 +5470,7 @@ dependencies = [
 [[package]]
 name = "pintle-gpui-kit"
 version = "0.1.0"
-source = "git+https://github.com/pintlehq/pintle-gpui-kit?rev=2da5d9b7c485a46b3a2d49907bc36be4819ee252#2da5d9b7c485a46b3a2d49907bc36be4819ee252"
+source = "git+https://github.com/pintlehq/pintle-gpui-kit?rev=952b567619a2c3bc958b0c0a089ff5aea3c1dce2#952b567619a2c3bc958b0c0a089ff5aea3c1dce2"
 dependencies = [
  "gpui-kit",
  "pintle-gpui-components",
@@ -5481,7 +5481,7 @@ dependencies = [
 [[package]]
 name = "pintle-gpui-shell"
 version = "0.1.0"
-source = "git+https://github.com/pintlehq/pintle-gpui-kit?rev=2da5d9b7c485a46b3a2d49907bc36be4819ee252#2da5d9b7c485a46b3a2d49907bc36be4819ee252"
+source = "git+https://github.com/pintlehq/pintle-gpui-kit?rev=952b567619a2c3bc958b0c0a089ff5aea3c1dce2#952b567619a2c3bc958b0c0a089ff5aea3c1dce2"
 dependencies = [
  "gpui-kit",
  "pintle-gpui-components",
@@ -5491,7 +5491,7 @@ dependencies = [
 [[package]]
 name = "pintle-gpui-theme"
 version = "0.1.0"
-source = "git+https://github.com/pintlehq/pintle-gpui-kit?rev=2da5d9b7c485a46b3a2d49907bc36be4819ee252#2da5d9b7c485a46b3a2d49907bc36be4819ee252"
+source = "git+https://github.com/pintlehq/pintle-gpui-kit?rev=952b567619a2c3bc958b0c0a089ff5aea3c1dce2#952b567619a2c3bc958b0c0a089ff5aea3c1dce2"
 dependencies = [
  "gpui-kit",
 ]

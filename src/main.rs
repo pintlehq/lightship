@@ -6,8 +6,8 @@ use gpui::component::{
     button::{Button, ButtonVariants},
 };
 use gpui::{
-    App, AppContext, Context, Entity, FocusHandle, Focusable, IntoElement, KeyBinding,
-    KeyDownEvent, Menu, MenuItem, Render, Subscription, Window, div, prelude::*, px,
+    App, AppContext, Context, Entity, FocusHandle, Focusable, IntoElement, KeyBinding, Menu,
+    MenuItem, Render, Subscription, Window, div, prelude::*, px,
 };
 use pintle_gpui_kit::kit as gpui_kit;
 use pintle_gpui_kit::{
@@ -19,7 +19,11 @@ use pintle_gpui_kit::{
     },
     theme,
 };
-use std::rc::Rc;
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+    rc::Rc,
+};
 
 #[cfg(test)]
 mod tests;
@@ -28,9 +32,11 @@ gpui::actions!(lightship, [Quit, Search, ToggleSidebar, TogglePanel]);
 mod backend;
 mod catalog;
 mod connections;
+mod detail_page;
 mod inspector;
 mod onboarding;
 mod resource_page;
+use detail_page::{DetailPage, DetailTarget, Routes};
 use resource_page::{Inspect, PanelState, ResourcePage};
 struct Lightship {
     workspace: Entity<Workspace>,
@@ -38,9 +44,9 @@ struct Lightship {
     navigation: Entity<NavigationTree>,
     layout: Entity<WorkbenchState>,
     palette: CommandPalette,
-    panel_tab: usize,
+    detail_routes: Routes,
     panel_state: Entity<PanelState>,
-    panel_focus: [FocusHandle; 2],
+    panel_focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
 impl Lightship {
@@ -56,11 +62,19 @@ impl Lightship {
             cx,
         );
         let documents = connections.read(cx).documents();
-        let panel_state = cx.new(|cx| PanelState::new(backend.clone(), cx));
+        let panel_state = cx.new(|_| PanelState::default());
+        let detail_routes: Routes = Rc::new(RefCell::new(HashMap::new()));
+        let routes = detail_routes.clone();
         let page_panel = panel_state.clone();
         let workspace = cx.new(|cx| {
             Workspace::new(
                 Rc::new(move |document, window, cx| {
+                    if let Some(target) = routes.borrow().get(document.key.0.as_ref()).cloned() {
+                        return WorkspacePage::new(
+                            cx.new(|cx| DetailPage::new(target, document, backend.clone(), cx)),
+                            cx,
+                        );
+                    }
                     WorkspacePage::new(
                         cx.new(|cx| {
                             ResourcePage::new(
@@ -127,14 +141,13 @@ impl Lightship {
             layout
         });
         let panel_observe = cx.observe(&panel_state, |_, _, cx| cx.notify());
-        let inspect = cx.subscribe_in(&panel_state, window, |this, _, _: &Inspect, window, cx| {
-            this.panel_tab = 0;
-            let focus = this.workspace.read(cx).active_focus_handle(cx);
-            this.layout.update(cx, |layout, cx| {
-                layout.set_panel_visible(true, &focus, window, cx)
-            });
-            cx.notify();
-        });
+        let inspect = cx.subscribe_in(
+            &panel_state,
+            window,
+            |this, _, event: &Inspect, window, cx| {
+                this.open_resource(event, window, cx);
+            },
+        );
         let nav = cx.subscribe_in(
             &navigation,
             window,
@@ -151,17 +164,40 @@ impl Lightship {
                 .active_view(cx)
                 .and_then(|view| workspace.read(cx).document(view, cx));
             if let Some(document) = selected {
+                let list_key = this
+                    .detail_routes
+                    .borrow()
+                    .get(document.key.0.as_ref())
+                    .map(DetailTarget::list_key);
                 let state = this.navigation.read(cx).state.clone();
                 state.update(cx, |state, cx| {
                     state.set_selected_item(
                         Some(&gpui::component::tree::TreeItem::new(
-                            document.key.0,
+                            list_key.map(Into::into).unwrap_or(document.key.0),
                             document.title,
                         )),
                         cx,
                     )
                 });
             }
+            let groups = workspace.read(cx).groups(cx);
+            let visible: HashSet<_> = groups.iter().filter_map(|g| g.active).collect();
+            let mut open_keys = HashSet::new();
+            for view in groups.into_iter().flat_map(|g| g.views) {
+                if let Some(doc) = workspace.read(cx).document(view, cx) {
+                    open_keys.insert(doc.key.0.to_string());
+                }
+                if let Some(page) = workspace
+                    .read(cx)
+                    .page(view, cx)
+                    .and_then(|p| p.downcast::<DetailPage>().ok())
+                {
+                    page.update(cx, |page, cx| page.set_visible(visible.contains(&view), cx));
+                }
+            }
+            this.detail_routes
+                .borrow_mut()
+                .retain(|key, _| open_keys.contains(key));
             cx.notify();
         });
         let mut entries: Vec<_> = documents
@@ -187,11 +223,19 @@ impl Lightship {
         let connection_changes =
             cx.observe_in(&connections, window, move |this, manager, window, cx| {
                 let docs = manager.read(cx).documents();
-                let removed: Vec<_> = previous_documents
+                let mut removed: Vec<_> = previous_documents
                     .iter()
                     .filter(|old| !docs.iter().any(|new| new.key == old.key))
                     .map(|d| d.key.clone())
                     .collect();
+                let connections = manager.read(cx).settings.connections.clone();
+                removed.extend(
+                    this.detail_routes
+                        .borrow()
+                        .iter()
+                        .filter(|(_, target)| !connections.iter().any(|c| c.id == target.cluster))
+                        .map(|(key, _)| key.as_str().into()),
+                );
                 if !removed.is_empty() {
                     this.workspace.update(cx, |workspace, cx| {
                         workspace.close_resources(
@@ -201,17 +245,31 @@ impl Lightship {
                             cx,
                         );
                     });
-                    this.panel_state.update(cx, |panel, cx| panel.clear(cx));
                 }
                 this.workspace.update(cx, |workspace, cx| {
                     for document in &docs {
                         workspace.update_document_metadata(document, cx);
+                    }
+                    for target in this.detail_routes.borrow().values() {
+                        if let Some(connection) =
+                            connections.iter().find(|c| c.id == target.cluster)
+                        {
+                            workspace
+                                .update_document_metadata(&target.document(&connection.name), cx);
+                        }
                     }
                     for view in workspace.groups(cx).into_iter().flat_map(|g| g.views) {
                         if let Some(document) = workspace.document(view, cx)
                             && let Some(page) = workspace
                                 .page(view, cx)
                                 .and_then(|p| p.downcast::<ResourcePage>().ok())
+                        {
+                            page.update(cx, |page, cx| page.rename(&document, cx));
+                        }
+                        if let Some(document) = workspace.document(view, cx)
+                            && let Some(page) = workspace
+                                .page(view, cx)
+                                .and_then(|p| p.downcast::<DetailPage>().ok())
                         {
                             page.update(cx, |page, cx| page.rename(&document, cx));
                         }
@@ -241,9 +299,9 @@ impl Lightship {
             navigation,
             layout,
             palette,
-            panel_tab: 0,
+            detail_routes,
             panel_state,
-            panel_focus: [cx.focus_handle(), cx.focus_handle()],
+            panel_focus: cx.focus_handle(),
             _subscriptions: vec![
                 nav,
                 layout_sub,
@@ -344,7 +402,6 @@ impl Lightship {
         });
     }
     fn toggle_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.panel_state.update(cx, |panel, _| panel.stop_logs());
         let focus = self.workspace.read(cx).active_focus_handle(cx);
         self.layout.update(cx, |layout, cx| {
             layout.set_panel_visible(!layout.panel_visible, &focus, window, cx)
@@ -395,41 +452,52 @@ impl Lightship {
                 .into_any_element()
         });
     }
+    fn open_resource(&mut self, event: &Inspect, window: &mut Window, cx: &mut Context<Self>) {
+        let cluster_name = self
+            .connections
+            .read(cx)
+            .settings
+            .connections
+            .iter()
+            .find(|c| c.id == event.cluster)
+            .map(|c| c.name.clone())
+            .unwrap_or_else(|| event.cluster.clone());
+        if event.key == "overview" {
+            if let Some(resource) = catalog::RESOURCES
+                .iter()
+                .find(|r| event.object["name"] == r.title && r.key != "overview")
+            {
+                let doc = pintle_gpui_kit::shell::workspace::Document::new(
+                    format!("{}/{}", event.cluster, resource.key).as_str(),
+                    resource.title,
+                    cluster_name,
+                );
+                self.workspace.update(cx, |workspace, cx| {
+                    workspace.open(doc, OpenMode::Permanent, window, cx);
+                });
+            }
+            return;
+        }
+        if let Some(target) =
+            DetailTarget::new(event.cluster.clone(), event.key.clone(), &event.object)
+        {
+            let document = target.document(&cluster_name);
+            self.detail_routes
+                .borrow_mut()
+                .insert(document.key.0.to_string(), target);
+            self.workspace.update(cx, |workspace, cx| {
+                workspace.open(document, OpenMode::Permanent, window, cx);
+            });
+        }
+    }
     fn panel(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
         chrome::frame("lightship-panel", cx)
-            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                if this
-                    .panel_focus
-                    .iter()
-                    .any(|focus| focus.is_focused(window))
-                    && let Some(index) =
-                        chrome::next_panel_tab(&event.keystroke.key, this.panel_tab, 2)
-                {
-                    this.panel_tab = index;
-                    if index == 1 {
-                        this.panel_state.update(cx, |panel, _| panel.stop_logs());
-                    }
-                    window.focus(&this.panel_focus[index], cx);
-                    cx.notify();
-                    cx.stop_propagation();
-                }
-            }))
             .child(
                 chrome::panel_tabs("lightship-panel-tabs")
-                    .children(["Details", "Output"].into_iter().enumerate().map(
-                        |(index, label)| {
-                            chrome::panel_tab(("panel-tab", index), label, self.panel_tab == index)
-                                .track_focus(&self.panel_focus[index])
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.panel_tab = index;
-                                    if index == 1 {
-                                        this.panel_state.update(cx, |panel, _| panel.stop_logs());
-                                    }
-                                    window.focus(&this.panel_focus[index], cx);
-                                    cx.notify();
-                                }))
-                        },
-                    ))
+                    .child(
+                        chrome::panel_tab("output-panel-tab", "Output", true)
+                            .track_focus(&self.panel_focus),
+                    )
                     .child(div().flex_1())
                     .child(
                         Button::new("close-panel")
@@ -445,7 +513,7 @@ impl Lightship {
             .child(
                 div()
                     .id("panel-content")
-                    .aria_label("Resource details and activity")
+                    .aria_label("Activity output")
                     .test_support()
                     .flex_1()
                     .min_h_0()
@@ -454,13 +522,7 @@ impl Lightship {
                     .font_family(cx.theme().mono_font_family.clone())
                     .text_size(px(12.))
                     .text_color(cx.theme().muted_foreground)
-                    .child(if self.panel_tab == 0 {
-                        self.panel_state.clone().into_any_element()
-                    } else {
-                        div()
-                            .child(self.panel_state.read(cx).output.join("\n"))
-                            .into_any_element()
-                    }),
+                    .child(self.panel_state.read(cx).output.join("\n")),
             )
     }
 }

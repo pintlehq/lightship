@@ -45,16 +45,29 @@ required; insecure TLS and endpoint URL path prefixes are not supported.
 - API discovery adds available resource types beneath Custom Resources.
 - Namespace and text filters, numeric sorting, retained preview/permanent tabs,
   independent splits, resizable columns and virtualized tables.
-- Details, conditions, ownership/relationship metadata, Events and read-only YAML.
-- Pod logs: container selection, previous logs, timestamps, follow, start/stop;
-  the in-memory tail is limited to 512 KiB.
+- Click a resource row or **View details** to open a permanent document tab.
+  Reopening the same resource in a pane selects its existing tab. The original
+  list retains its filters, sorting, checkbox selection and scroll position.
+  Arrow keys navigate the list; Enter opens the selected resource.
+- Details have Overview cards, metadata, labels, annotations, ports, conditions,
+  owner references, recent Events, read-only YAML and full Events. Additional
+  resource fields are collapsible. The bottom panel contains activity Output.
+- Each detail view retains its own subtab, scroll and log options across docking
+  and splits. Refresh preserves older data with an explicit stale/error status
+  on failure. UID checks detect resources replaced under the same name.
+- Pod logs support container selection, previous logs, timestamps, follow and
+  Start/Stop. Deployments, StatefulSets, DaemonSets and Jobs can select related
+  Pods, checked by controller UID in the same namespace; Deployments resolve
+  their ReplicaSets first. Streams stop when changing targets/options, leaving
+  Logs, hiding/closing the document or removing its connection. Returning does
+  not automatically resume a stream. The in-memory tail is limited to 512 KiB.
 - Overview counts and health summaries, plus CPU/memory totals when Metrics API is
   available. Missing APIs and permission errors remain explicit.
 - Helm release revisions, charts, values and manifests from Secrets/ConfigMaps.
   SQL Helm storage is not supported. Inaccessible storage is reported, not mistaken
   for an empty release list.
 - Secrets and potentially sensitive Helm payloads are hidden until **Reveal**.
-  Closing/changing the inspected resource resets reveal state. No payload is logged.
+  Hiding/closing its document resets reveal state. No payload is logged.
 - Checkboxes offer **Copy names** and clear selection only. There is no create,
   edit, delete, scale, restart, exec, attach, terminal, proxy or port-forward command.
 
@@ -97,7 +110,10 @@ The UI checks cover selection, filtering, sorting, splits, preview/permanent tab
 keyboard Escape/modal isolation, and the floating overlay geometry in light/dark at
 1440 × 900 and 1024 × 680. Onboarding checks also cover automatic detection,
 YAML debounce, duplicate identities, plugin consent, cancellation and fixed dialog
-footer geometry. There is no Demo mode in the shipped application.
+footer geometry. Detail checks cover permanent tabs, duplicate activation, pane
+isolation, cluster rename/removal, UID replacement, scoped workload ownership,
+Events pagination/RBAC, sensitive-value masking, log lifecycle and stale refresh.
+There is no Demo mode in the shipped application.
 
 ## Coordinated kit development
 

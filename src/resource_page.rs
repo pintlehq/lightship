@@ -7,7 +7,7 @@ use gpui::component::{
     checkbox::Checkbox,
     input::{Input, InputEvent, InputState},
     menu::{DropdownMenu, PopupMenuItem},
-    table::{Column, ColumnSort, TableDelegate, TableEvent, TableState},
+    table::{Column, ColumnSort, TableDelegate, TableState},
 };
 use gpui::{prelude::*, *};
 use pintle_gpui_kit::{
@@ -356,7 +356,23 @@ impl TableDelegate for Rows {
                 )
                 .into_any_element();
         }
+        let panel = self.panel.clone();
+        let cluster = self.cluster.clone();
+        let key = self.key.clone();
+        let object = self.objects.get(&record.id).cloned();
         div()
+            .id(SharedString::from(format!(
+                "resource-cell:{}:{col}",
+                record.id
+            )))
+            .test_support()
+            .on_click(move |_, _, cx| {
+                if let Some(object) = &object {
+                    panel.update(cx, |panel, cx| {
+                        panel.inspect(cluster.clone(), key.clone(), object.clone(), cx)
+                    });
+                }
+            })
             .h_full()
             .flex()
             .items_center()
@@ -454,26 +470,6 @@ impl ResourcePage {
                 });
             }
         });
-        let selected = cx.subscribe(&table, |_, table, event: &TableEvent, cx| {
-            if let TableEvent::SelectRow(row) = event {
-                let rows = table.read(cx).delegate();
-                let selected = rows
-                    .visible
-                    .get(*row)
-                    .and_then(|i| rows.objects.get(&rows.rows[*i].id))
-                    .map(|object| {
-                        (
-                            rows.panel.clone(),
-                            rows.cluster.clone(),
-                            rows.key.clone(),
-                            object.clone(),
-                        )
-                    });
-                if let Some((panel, cluster, key, object)) = selected {
-                    panel.update(cx, |panel, cx| panel.inspect(cluster, key, object, cx));
-                }
-            }
-        });
         let observe = cx.observe(&table, |_, _, cx| cx.notify());
         let timer = cx.background_executor().clone();
         let poll = cx.spawn(async move |entity, cx| {
@@ -513,7 +509,7 @@ impl ResourcePage {
             job,
             title,
             _poll: poll,
-            _subscriptions: vec![changed, selected, observe],
+            _subscriptions: vec![changed, observe],
         }
     }
     pub fn rename(&mut self, document: &Document, cx: &mut Context<Self>) {
@@ -704,6 +700,25 @@ impl Render for ResourcePage {
                 }
             })
             .on_key_down(cx.listener(|page, event: &KeyDownEvent, window, cx| {
+                if event.keystroke.key == "enter"
+                    && !window.has_active_dialog(cx)
+                    && page.table.focus_handle(cx).contains_focused(window, cx)
+                {
+                    let table = page.table.read(cx);
+                    let rows = table.delegate();
+                    if let Some(index) = table.selected_row().and_then(|row| rows.visible.get(row))
+                        && let Some(object) = rows.objects.get(&rows.rows[*index].id)
+                    {
+                        let (panel, cluster, key, object) = (
+                            rows.panel.clone(),
+                            rows.cluster.clone(),
+                            rows.key.clone(),
+                            object.clone(),
+                        );
+                        panel.update(cx, |panel, cx| panel.inspect(cluster, key, object, cx));
+                        cx.stop_propagation();
+                    }
+                }
                 if event.keystroke.key == "escape"
                     && !window.has_active_dialog(cx)
                     && (page.table.focus_handle(cx).contains_focused(window, cx)

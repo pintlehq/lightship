@@ -322,7 +322,7 @@ fn live_readonly_smoke() {
     backend.disconnect("smoke");
 }
 
-fn mock_backend(
+pub(crate) fn mock_backend(
     handler: impl Fn(&http::Request<kube::client::Body>) -> (u16, String) + Send + Sync + 'static,
 ) -> Arc<Backend> {
     let backend = Backend::new();
@@ -331,6 +331,7 @@ fn mock_backend(
     for r in crate::catalog::RESOURCES {
         policy.register(builtin(r.key).collection(None));
     }
+    policy.register(builtin("replicasets").collection(None));
     let guard = policy.clone();
     let handler = Arc::new(handler);
     let service = tower::service_fn(move |request: http::Request<kube::client::Body>| {
@@ -360,7 +361,7 @@ fn mock_backend(
     drop(_entered);
     backend
 }
-fn await_result<T: Clone>(job: &mut Job<T>) -> Result<T, String> {
+pub(crate) fn await_result<T: Clone>(job: &mut Job<T>) -> Result<T, String> {
     let start = std::time::Instant::now();
     loop {
         if let Some(result) = job.take() {
@@ -433,9 +434,16 @@ fn logs_query_options_and_completed_job_are_retained_once() {
     let recorded = paths.clone();
     let backend = mock_backend(move |r| {
         recorded.lock().unwrap().push(r.uri().to_string());
-        (200, "first\nsecond\n".into())
+        if r.uri().path().ends_with("/log") {
+            (200, "first\nsecond\n".into())
+        } else {
+            (
+                200,
+                json!({"metadata":{"uid":"pod-uid","name":"pod","namespace":"apps"}}).to_string(),
+            )
+        }
     });
-    let object = json!({"metadata":{"name":"pod","namespace":"apps"}});
+    let object = json!({"metadata":{"uid":"pod-uid","name":"pod","namespace":"apps"}});
     let mut job = backend.logs(
         "test",
         object,
@@ -450,7 +458,9 @@ fn logs_query_options_and_completed_job_are_retained_once() {
     std::thread::sleep(Duration::from_millis(20));
     let _ = job.take();
     assert!(job.take().is_none());
-    let path = &paths.lock().unwrap()[0];
+    let recorded = paths.lock().unwrap();
+    assert_eq!(recorded[0], "/api/v1/namespaces/apps/pods/pod");
+    let path = &recorded[1];
     assert!(path.contains("/namespaces/apps/pods/pod/log?"));
     assert!(path.contains("previous=true"));
     assert!(path.contains("follow=false"));
@@ -538,4 +548,144 @@ fn overview_metrics_summarize_real_cpu_and_memory_quantities() {
     let row = presentation::row("c", crate::catalog::RESOURCES[0], &value);
     assert!(row.cells[1].text.contains("CPU 0.25 cores"));
     assert!(row.cells[1].text.contains("Memory 2.0 MiB"));
+}
+
+#[test]
+fn details_check_uid_paginate_events_and_preserve_event_failures() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counted = calls.clone();
+    let backend = mock_backend(move |r| {
+        assert_eq!(r.method(), http::Method::GET);
+        if r.uri().path().ends_with("/deployments/api") {
+            return (
+                200,
+                json!({"metadata":{"uid":"original","name":"api","namespace":"apps"}}).to_string(),
+            );
+        }
+        assert_eq!(r.uri().path(), "/api/v1/namespaces/apps/events");
+        assert!(
+            r.uri()
+                .query()
+                .unwrap()
+                .contains("involvedObject.uid%3Doriginal")
+        );
+        let n = counted.fetch_add(1, Ordering::SeqCst);
+        if n == 0 {
+            (
+                200,
+                json!({"metadata":{"continue":"next"},"items":[{"reason":"Started"}]}).to_string(),
+            )
+        } else if n == 1 {
+            (
+                200,
+                json!({"metadata":{},"items":[{"reason":"Ready"}]}).to_string(),
+            )
+        } else {
+            (
+                403,
+                json!({"kind":"Status","code":403,"message":"private server message"}).to_string(),
+            )
+        }
+    });
+    let seed = json!({"metadata":{"uid":"original","name":"api","namespace":"apps"}});
+    let detail = await_result(&mut backend.detail("test", "deployments", seed.clone())).unwrap();
+    assert_eq!(detail.events["items"].as_array().unwrap().len(), 2);
+    let detail = await_result(&mut backend.detail("test", "deployments", seed.clone())).unwrap();
+    assert_eq!(detail.object["metadata"]["uid"], "original");
+    assert!(
+        detail.events["unavailable"]
+            .as_str()
+            .unwrap()
+            .contains("Forbidden")
+    );
+    assert!(!detail.events.to_string().contains("private server message"));
+    let mut replaced = seed;
+    replaced["metadata"]["uid"] = json!("older-uid");
+    assert!(
+        await_result(&mut backend.detail("test", "deployments", replaced))
+            .err()
+            .unwrap()
+            .contains("Resource replaced")
+    );
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        3,
+        "replacement must not fetch events for the new object"
+    );
+}
+#[test]
+fn workload_pods_are_scoped_paginated_and_checked_by_controller_uid() {
+    let paths = Arc::new(Mutex::new(Vec::new()));
+    let recorded = paths.clone();
+    let backend = mock_backend(move |r| {
+        assert_eq!(r.method(), http::Method::GET);
+        recorded.lock().unwrap().push(r.uri().to_string());
+        let owned = |name: &str, uid: &str, owner: &str, ns: &str| json!({"metadata":{"name":name,"uid":uid,"namespace":ns,"ownerReferences":[{"uid":owner,"controller":true}]}});
+        let body = if r.uri().path().ends_with("/replicasets") {
+            json!({"items":[owned("ours","rs-ours","deployment","apps"),owned("other","rs-other","other-deployment","apps")]})
+        } else if r.uri().query().unwrap().contains("continue=next") {
+            json!({"items":[owned("b","pod-b","rs-ours","apps"),owned("wrong-namespace","pod-wrong-ns","rs-ours","other")]})
+        } else {
+            json!({"metadata":{"continue":"next"},"items":[owned("a","pod-a","rs-ours","apps"),owned("unrelated","pod-other","rs-other","apps"),{"metadata":{"name":"non-controller","uid":"non-controller","namespace":"apps","ownerReferences":[{"uid":"rs-ours","controller":false}]}}]})
+        };
+        (200, body.to_string())
+    });
+    let object = json!({"metadata":{"uid":"deployment","name":"api","namespace":"apps"}});
+    let pods = await_result(&mut backend.related_pods("test", "deployments", object)).unwrap();
+    assert_eq!(
+        pods.iter()
+            .map(|p| p["metadata"]["name"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["a", "b"]
+    );
+    assert!(
+        paths
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|p| p.contains("/namespaces/apps/"))
+    );
+    for key in ["statefulsets", "daemonsets", "jobs"] {
+        let object = json!({"metadata":{"uid":"rs-ours","namespace":"apps"}});
+        assert_eq!(
+            await_result(&mut backend.related_pods("test", key, object))
+                .unwrap()
+                .len(),
+            2
+        );
+    }
+}
+#[test]
+fn related_pod_forbidden_and_replaced_log_targets_do_not_start_streams() {
+    let streams = Arc::new(AtomicUsize::new(0));
+    let counted = streams.clone();
+    let backend = mock_backend(move |r| {
+        if r.uri().path().ends_with("/log") {
+            counted.fetch_add(1, Ordering::SeqCst);
+        }
+        if r.uri().path().ends_with("/pods/p") {
+            (200, json!({"metadata":{"uid":"replacement"}}).to_string())
+        } else {
+            (403, json!({"kind":"Status","code":403}).to_string())
+        }
+    });
+    assert!(
+        await_result(&mut backend.related_pods(
+            "test",
+            "jobs",
+            json!({"metadata":{"uid":"job","namespace":"apps"}})
+        ))
+        .unwrap_err()
+        .contains("Forbidden")
+    );
+    assert!(
+        await_result(&mut backend.logs(
+            "test",
+            json!({"metadata":{"name":"p","namespace":"apps","uid":"old"}}),
+            LogOptions::default()
+        ))
+        .unwrap_err()
+        .contains("Resource replaced")
+    );
+    assert_eq!(streams.load(Ordering::SeqCst), 0);
 }

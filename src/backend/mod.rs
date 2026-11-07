@@ -1,5 +1,6 @@
 //! Read-only Kubernetes service. Raw clients and URLs never leave this module.
 pub mod config;
+mod details;
 mod policy;
 pub mod presentation;
 use config::Connection;
@@ -46,7 +47,7 @@ impl Spec {
 }
 pub fn builtin(key: &str) -> Spec {
     let (group, version, plural) = match key {
-        "deployments" | "statefulsets" | "daemonsets" => ("apps", "v1", key),
+        "deployments" | "statefulsets" | "daemonsets" | "replicasets" => ("apps", "v1", key),
         "jobs" | "cronjobs" => ("batch", "v1", key),
         "ingresses" | "networkpolicies" => ("networking.k8s.io", "v1", key),
         "storageclasses" => ("storage.k8s.io", "v1", key),
@@ -91,6 +92,9 @@ pub struct Job<T: Clone> {
     closed: bool,
 }
 impl<T: Clone> Job<T> {
+    pub fn finished(&self) -> bool {
+        self.closed
+    }
     pub fn take(&mut self) -> Option<Result<T, String>> {
         if self.closed {
             return None;
@@ -162,6 +166,7 @@ impl Backend {
                     policy.register(builtin(resource.key).collection(None));
                 }
             }
+            policy.register(builtin("replicasets").collection(None));
             for kind in ["pods", "nodes"] {
                 policy.register(format!("/apis/metrics.k8s.io/v1beta1/{kind}"));
             }
@@ -299,32 +304,12 @@ impl Backend {
     pub fn detail(&self, id: &str, key: &str, object: Value) -> Job<Detail> {
         let session = self.session(id);
         let spec = self.spec(id, key);
-        let virtual_resource = key == "helm" || key == "overview";
-        self.job(async move {
-            let session = session?;
-            let mut object = if virtual_resource {
-                object
-            } else {
-                session.json(&spec.item(&object)).await?
-            };
-            if spec.key == "secrets" {
-                object["kind"] = json!("Secret");
-            }
-            let events = if let Some(uid) = object["metadata"]["uid"].as_str() {
-                let ns = object["metadata"]["namespace"].as_str();
-                session
-                    .json(&format!(
-                        "{}?fieldSelector={}",
-                        builtin("events").collection(ns),
-                        encode(&format!("involvedObject.uid={uid}"))
-                    ))
-                    .await
-                    .unwrap_or_else(|e| json!({"unavailable":e}))
-            } else {
-                json!({})
-            };
-            Ok(Detail { object, events })
-        })
+        self.job(async move { session?.detail_for(&spec, object).await })
+    }
+    pub fn related_pods(&self, id: &str, key: &str, object: Value) -> Job<Vec<Value>> {
+        let session = self.session(id);
+        let key = key.to_string();
+        self.job(async move { session?.related_pods(&key, &object).await })
     }
     pub fn logs(&self, id: &str, object: Value, options: LogOptions) -> Job<String> {
         let session = self.session(id);
@@ -333,6 +318,8 @@ impl Backend {
             let result = async {
                 let session = session?;
                 let mut cancellation=session.cancelled.subscribe();
+                let current = session.json(&builtin("pods").item(&object)).await?;
+                details::same_uid(&object, &current)?;
                 let path = format!("{}/log?container={}&previous={}&timestamps={}&follow={}&tailLines=1000", builtin("pods").item(&object), encode(&options.container), options.previous, options.timestamps, options.follow);
                 let mut stream = session.client.request_stream(get(&path)).await.map_err(error)?;
                 let mut bytes = Vec::new(); let mut chunk = [0u8;8192];
@@ -410,15 +397,25 @@ impl Session {
         spec: &Spec,
         labels: Option<&str>,
     ) -> Result<(Vec<Value>, String), String> {
+        self.list_scoped(spec, None, labels, None).await
+    }
+    async fn list_scoped(
+        &self,
+        spec: &Spec,
+        namespace: Option<&str>,
+        labels: Option<&str>,
+        fields: Option<&str>,
+    ) -> Result<(Vec<Value>, String), String> {
         let mut objects = Vec::new();
         let mut continuation = String::new();
         let mut seen = std::collections::HashSet::new();
         loop {
             let url = format!(
-                "{}?limit=500&continue={}&labelSelector={}",
-                spec.collection(None),
+                "{}?limit=500&continue={}&labelSelector={}&fieldSelector={}",
+                spec.collection(namespace),
                 encode(&continuation),
-                encode(labels.unwrap_or_default())
+                encode(labels.unwrap_or_default()),
+                encode(fields.unwrap_or_default())
             );
             let response = self.json(&url).await?;
             if !self.policy.active() {
@@ -519,4 +516,4 @@ impl Session {
     }
 }
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
