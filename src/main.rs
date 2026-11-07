@@ -35,8 +35,11 @@ mod connections;
 mod detail_page;
 mod inspector;
 mod onboarding;
+mod overview_chart;
+mod overview_page;
 mod resource_page;
 use detail_page::{DetailPage, DetailTarget, Routes};
+use overview_page::OverviewPage;
 use resource_page::{Inspect, PanelState, ResourcePage};
 struct Lightship {
     workspace: Entity<Workspace>,
@@ -72,6 +75,19 @@ impl Lightship {
                     if let Some(target) = routes.borrow().get(document.key.0.as_ref()).cloned() {
                         return WorkspacePage::new(
                             cx.new(|cx| DetailPage::new(target, document, backend.clone(), cx)),
+                            cx,
+                        );
+                    }
+                    if document
+                        .key
+                        .0
+                        .split_once('/')
+                        .is_some_and(|(_, key)| key == "overview")
+                    {
+                        return WorkspacePage::new(
+                            cx.new(|cx| {
+                                OverviewPage::new(document, page_panel.clone(), backend.clone(), cx)
+                            }),
                             cx,
                         );
                     }
@@ -270,6 +286,13 @@ impl Lightship {
                             && let Some(page) = workspace
                                 .page(view, cx)
                                 .and_then(|p| p.downcast::<DetailPage>().ok())
+                        {
+                            page.update(cx, |page, cx| page.rename(&document, cx));
+                        }
+                        if let Some(document) = workspace.document(view, cx)
+                            && let Some(page) = workspace
+                                .page(view, cx)
+                                .and_then(|p| p.downcast::<OverviewPage>().ok())
                         {
                             page.update(cx, |page, cx| page.rename(&document, cx));
                         }

@@ -61,8 +61,20 @@ required; insecure TLS and endpoint URL path prefixes are not supported.
   their ReplicaSets first. Streams stop when changing targets/options, leaving
   Logs, hiding/closing the document or removing its connection. Returning does
   not automatically resume a stream. The in-memory tail is limited to 512 KiB.
-- Overview counts and health summaries, plus CPU/memory totals when Metrics API is
-  available. Missing APIs and permission errors remain explicit.
+- Cluster Overview dashboard with Nodes, active Pods/capacity, CPU, Memory, CPU
+  Requests and Memory Requests cards; CPU/Memory area charts and the 10 most recent
+  Events. Cards navigate to Nodes, Pods and Namespaces; Events open detail tabs.
+- Usage percentages use Node Metrics and Node allocatable capacity. Request totals
+  include scheduled nonterminal Pods and Kubernetes 1.34 effective-request rules
+  for init/sidecar containers, Pod-level resources, overhead and in-place resize.
+- Overview keeps real observations for the last 30 minutes, sampled every 30 seconds,
+  with at most 61 buckets. One sampler serves all Overview tabs/splits per connection.
+  Closing the last Overview stops polling while retaining its bounded in-memory
+  history; reconnect/removal clears it. Manual refresh preserves history. There is
+  no historical backfill, disk cache or generated data; unsampled/failed intervals
+  remain gaps. Stale (>90 seconds), incomplete or inaccessible metrics remain
+  explicit instead of being displayed as zero. Each endpoint has its own timeout,
+  so one failed source does not suppress successful parts of the dashboard.
 - Helm release revisions, charts, values and manifests from Secrets/ConfigMaps.
   SQL Helm storage is not supported. Inaccessible storage is reported, not mistaken
   for an empty release list.
@@ -113,6 +125,9 @@ YAML debounce, duplicate identities, plugin consent, cancellation and fixed dial
 footer geometry. Detail checks cover permanent tabs, duplicate activation, pane
 isolation, cluster rename/removal, UID replacement, scoped workload ownership,
 Events pagination/RBAC, sensitive-value masking, log lifecycle and stale refresh.
+Overview tests also cover effective requests, quantity units, coverage/freshness,
+partial failures, pagination, bounded history and a shared sampler with a controlled
+clock, responsive light/dark charts, navigation and independent pane scroll.
 There is no Demo mode in the shipped application.
 
 ## Coordinated kit development

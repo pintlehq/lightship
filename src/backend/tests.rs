@@ -325,13 +325,32 @@ fn live_readonly_smoke() {
 pub(crate) fn mock_backend(
     handler: impl Fn(&http::Request<kube::client::Body>) -> (u16, String) + Send + Sync + 'static,
 ) -> Arc<Backend> {
-    let backend = Backend::new();
+    install_mock(Backend::new(), handler)
+}
+pub(crate) fn mock_backend_on(
+    runtime: tokio::runtime::Handle,
+    handler: impl Fn(&http::Request<kube::client::Body>) -> (u16, String) + Send + Sync + 'static,
+) -> Arc<Backend> {
+    install_mock(
+        Arc::new(Backend {
+            runtime,
+            sessions: Mutex::new(HashMap::new()),
+            overviews: Mutex::new(HashMap::new()),
+        }),
+        handler,
+    )
+}
+fn install_mock(
+    backend: Arc<Backend>,
+    handler: impl Fn(&http::Request<kube::client::Body>) -> (u16, String) + Send + Sync + 'static,
+) -> Arc<Backend> {
     let _entered = backend.runtime.enter();
     let policy = policy::Policy::default();
     for r in crate::catalog::RESOURCES {
         policy.register(builtin(r.key).collection(None));
     }
     policy.register(builtin("replicasets").collection(None));
+    policy.register("/apis/metrics.k8s.io/v1beta1/nodes".into());
     let guard = policy.clone();
     let handler = Arc::new(handler);
     let service = tower::service_fn(move |request: http::Request<kube::client::Body>| {
@@ -423,9 +442,12 @@ fn missing_metrics_and_forbidden_resources_are_not_empty_successes() {
         )
     });
     backend.runtime.block_on(async {
-        let rows = backend.session("test").unwrap().overview().await;
-        assert!(rows.iter().all(|r| r.get("error").is_some()));
-        assert!(rows.iter().any(|r| r["name"] == "pods metrics"));
+        let snapshot = backend.session("test").unwrap().dashboard().await;
+        assert!(snapshot.nodes.is_err());
+        assert!(snapshot.pods.is_err());
+        assert!(snapshot.cpu.is_err());
+        assert!(snapshot.memory.is_err());
+        assert!(snapshot.events.is_err());
     });
 }
 #[test]

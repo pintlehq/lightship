@@ -29,6 +29,7 @@ chrono = "0.4"
 security-framework = "3"
 
 [dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }
 gpui-kit = { version = "=0.8.1", default-features = false, features = ["test-support", "component", "assets"] }
 
 [lints.rust]

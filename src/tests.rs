@@ -242,6 +242,17 @@ fn every_resource_page_opens_without_fixture_dependency(cx: &mut TestAppContext)
             });
         });
         step(cx, handle, |_, cx| {
+            if resource.key == "overview" {
+                let workspace = app.read(cx).workspace.read(cx);
+                assert!(
+                    workspace
+                        .page(workspace.active_view(cx).unwrap(), cx)
+                        .unwrap()
+                        .downcast::<OverviewPage>()
+                        .is_ok()
+                );
+                return;
+            }
             let page = active_page(&app, cx);
             assert_eq!(
                 page.read(cx).table.read(cx).delegate().resource.key,
@@ -712,5 +723,166 @@ fn detail_cards_and_tabs_fit_both_themes_sizes_and_narrow_splits(cx: &mut TestAp
     });
     step(cx, handle, |window, _| {
         assert_eq!(window.find_all("resource-detail-page").len(), 2);
+    });
+}
+
+fn active_overview(app: &Entity<Lightship>, cx: &App) -> Entity<OverviewPage> {
+    let workspace = app.read(cx).workspace.read(cx);
+    workspace
+        .page(workspace.active_view(cx).unwrap(), cx)
+        .unwrap()
+        .downcast::<OverviewPage>()
+        .unwrap()
+}
+fn dashboard(
+    cx: &mut TestAppContext,
+) -> (AnyWindowHandle, Entity<Lightship>, Entity<OverviewPage>) {
+    let (handle, app) = open(cx);
+    step(cx, handle, |window, cx| {
+        app.read(cx).workspace.clone().update(cx, |w, cx| {
+            w.open(
+                catalog::RESOURCES
+                    .iter()
+                    .find(|r| r.key == "overview")
+                    .unwrap()
+                    .document("Development"),
+                OpenMode::Permanent,
+                window,
+                cx,
+            );
+        });
+        active_overview(&app, cx).update(cx, |page, cx| {
+            page.set_test_state(backend::overview::tests::state(chrono::Utc::now()), cx)
+        });
+    });
+    step(cx, handle, |_, _| {});
+    step(cx, handle, |_, _| {});
+    let page = cx.update(|cx| active_overview(&app, cx));
+    (handle, app, page)
+}
+#[gpui_kit::test]
+fn overview_dashboard_has_real_cards_charts_and_responsive_layout(cx: &mut TestAppContext) {
+    let (handle, _, _) = dashboard(cx);
+    for dimensions in [size(px(1440.), px(900.)), size(px(1024.), px(680.))] {
+        cx.simulate_window_resize(handle, dimensions);
+        for mode in [theme::ThemeMode::Light, theme::ThemeMode::Dark] {
+            cx.update(|cx| theme::set_mode(mode, cx));
+            step(cx, handle, |_, _| {});
+            step(cx, handle, |_, _| {});
+            step(cx, handle, |window, _| {
+                assert!(window.find_all("resource-table-viewport").is_empty());
+                let page = window.find("cluster-overview-page").bounds();
+                let nodes = window.find("overview-nodes").bounds();
+                let pods = window.find("overview-pods").bounds();
+                let cpu = window.find("overview-cpu").bounds();
+                assert_eq!(nodes.top(), pods.top());
+                if dimensions.width == px(1440.) {
+                    assert_eq!(cpu.top(), nodes.top());
+                } else {
+                    assert!(cpu.top() > nodes.top());
+                }
+                for id in [
+                    "overview-nodes",
+                    "overview-pods",
+                    "overview-cpu",
+                    "overview-memory",
+                    "overview-cpu-requests",
+                    "overview-memory-requests",
+                    "overview-cpu-chart",
+                    "overview-memory-chart",
+                ] {
+                    let bounds = window.find(id).bounds();
+                    assert!(bounds.left() >= page.left());
+                    assert!(bounds.right() <= page.right() + px(1.));
+                }
+                assert_eq!(window.find("overview-nodes").label(), Some("NODES: 2"));
+                assert_eq!(window.find("overview-pods").label(), Some("PODS: 4 / 96"));
+                assert!(window.find("overview-header").bounds().bottom() < page.bottom());
+            });
+        }
+    }
+}
+#[gpui_kit::test]
+fn overview_navigation_cards_namespace_link_and_event_open_documents(cx: &mut TestAppContext) {
+    let (handle, app, page) = dashboard(cx);
+    let workspace = cx.update(|cx| app.read(cx).workspace.clone());
+    let overview = cx.update(|cx| workspace.read(cx).active_view(cx).unwrap());
+    step(cx, handle, |window, cx| window.click("overview-nodes", cx));
+    step(cx, handle, |window, cx| {
+        assert_eq!(
+            active_page(&app, cx).read(cx).table.read(cx).delegate().key,
+            "nodes"
+        );
+        workspace.update(cx, |w, cx| w.select(overview, window, cx));
+    });
+    step(cx, handle, |window, cx| {
+        window.click("overview-namespaces", cx)
+    });
+    step(cx, handle, |window, cx| {
+        assert_eq!(
+            active_page(&app, cx).read(cx).table.read(cx).delegate().key,
+            "namespaces"
+        );
+        assert!(!workspace.read(cx).groups(cx)[0].views.iter().any(|view| {
+            workspace.read(cx).document(*view, cx).unwrap().key.0 == "Development/pods"
+        }));
+        workspace.update(cx, |w, cx| w.select(overview, window, cx));
+        page.update(cx, |page, cx| {
+            page.scroll.set_offset(point(px(0.), px(-10000.)));
+            cx.notify();
+        });
+    });
+    step(cx, handle, |window, cx| {
+        window.click(("overview-event", 0usize), cx);
+    });
+    step(cx, handle, |_, cx| {
+        assert_eq!(active_detail(&app, cx).read(cx).target.name(), "event-0")
+    });
+}
+#[gpui_kit::test]
+fn overview_split_keeps_scroll_independent_and_retains_snapshot(cx: &mut TestAppContext) {
+    let (handle, app, first) = dashboard(cx);
+    let workspace = cx.update(|cx| app.read(cx).workspace.clone());
+    cx.simulate_window_resize(handle, size(px(1024.), px(680.)));
+    step(cx, handle, |window, cx| {
+        let view = workspace.read(cx).active_view(cx).unwrap();
+        workspace.update(cx, |w, cx| w.split(view, SplitDirection::Right, window, cx));
+        active_overview(&app, cx).update(cx, |page, cx| {
+            page.set_test_state(backend::overview::tests::state(chrono::Utc::now()), cx)
+        });
+    });
+    step(cx, handle, |_, _| {});
+    step(cx, handle, |_, _| {});
+    step(cx, handle, |window, cx| {
+        assert_eq!(window.find_all("cluster-overview-page").len(), 2);
+        let second = active_overview(&app, cx);
+        assert_ne!(first.entity_id(), second.entity_id());
+        first.update(cx, |page, cx| {
+            page.scroll.set_offset(point(px(0.), px(-200.)));
+            cx.notify();
+        });
+        assert_eq!(second.read(cx).scroll.offset().y, px(0.));
+        assert!(first.read(cx).scroll.offset().y < px(0.));
+        assert_eq!(first.read(cx).state.cpu_history.len(), 3);
+        assert_eq!(second.read(cx).state.cpu_history.len(), 3);
+    });
+}
+#[gpui_kit::test]
+fn overview_partial_errors_do_not_show_fake_zeroes_or_hide_other_cards(cx: &mut TestAppContext) {
+    let (handle, _, page) = dashboard(cx);
+    step(cx, handle, |_, cx| {
+        page.update(cx, |page, cx| {
+            let mut state = backend::overview::tests::state(chrono::Utc::now());
+            let snapshot = state.snapshot.as_mut().unwrap();
+            snapshot.cpu = Err("Metrics coverage 1/2 nodes".into());
+            snapshot.namespaces = Err("Forbidden".into());
+            snapshot.events = Err("Forbidden".into());
+            page.set_test_state(state, cx);
+        })
+    });
+    step(cx, handle, |window, _| {
+        assert_eq!(window.find("overview-cpu").label(), Some("CPU: —"));
+        assert_eq!(window.find("overview-memory").label(), Some("MEMORY: 19%"));
+        assert!(!window.find_all("overview-recent-events").is_empty());
     });
 }

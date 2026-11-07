@@ -1,6 +1,7 @@
 //! Read-only Kubernetes service. Raw clients and URLs never leave this module.
 pub mod config;
 mod details;
+pub mod overview;
 mod policy;
 pub mod presentation;
 use config::Connection;
@@ -116,6 +117,7 @@ impl<T: Clone> Drop for Job<T> {
 pub struct Backend {
     runtime: tokio::runtime::Handle,
     sessions: Mutex<HashMap<String, Arc<Session>>>,
+    overviews: Mutex<HashMap<String, Arc<overview::OverviewHub>>>,
 }
 struct Session {
     client: Client,
@@ -139,6 +141,7 @@ impl Backend {
                 .handle()
                 .clone(),
             sessions: Mutex::new(HashMap::new()),
+            overviews: Mutex::new(HashMap::new()),
         })
     }
     fn job<T: Clone + Send + Sync + 'static>(
@@ -217,6 +220,7 @@ impl Backend {
                 }
             }
             specs.sort_by(|a, b| a.title.cmp(&b.title));
+            let id = connection.id.clone();
             backend.sessions.lock().unwrap().insert(
                 connection.id,
                 Arc::new(Session {
@@ -227,10 +231,16 @@ impl Backend {
                     health: Mutex::new("Connected · Read-only".into()),
                 }),
             );
+            if let Some(hub) = backend.overviews.lock().unwrap().get(&id) {
+                hub.refresh();
+            }
             Ok(specs)
         })
     }
     pub fn disconnect(&self, id: &str) {
+        if let Some(hub) = self.overviews.lock().unwrap().remove(id) {
+            hub.invalidate();
+        }
         if let Some(session) = self.sessions.lock().unwrap().remove(id) {
             session.policy.revoke();
             let _ = session.cancelled.send(true);
@@ -265,7 +275,6 @@ impl Backend {
                     let session = backend.session(&id)?;
                     let mut cancellation=session.cancelled.subscribe();
                     let spec = backend.spec(&id, &key);
-                    if key == "overview" { let objects = session.overview().await; let _ = sender.send(Some(Ok(Snapshot { objects, status: "Read-only · refreshed every 30s".into() }))); tokio::time::sleep(Duration::from_secs(30)).await; return Ok(()); }
                     if key == "helm" { let objects = session.helm().await?; let _ = sender.send(Some(Ok(Snapshot { objects, status: "Read-only · refreshed every 30s".into() }))); tokio::time::sleep(Duration::from_secs(30)).await; return Ok(()); }
                     let (mut objects, version) = session.list(&spec, None).await?;
                     let _ = sender.send(Some(Ok(Snapshot { objects: objects.clone(), status: "Read-only · watching".into() })));
@@ -451,34 +460,6 @@ impl Session {
                 return Err("Invalid repeated pagination token".into());
             }
         }
-    }
-    async fn overview(&self) -> Vec<Value> {
-        let mut rows = Vec::new();
-        for resource in crate::catalog::RESOURCES
-            .iter()
-            .filter(|r| !matches!(r.key, "overview" | "helm"))
-        {
-            let row = match self.list(&builtin(resource.key), None).await {
-                Ok((objects, _)) => {
-                    let healthy = objects.iter().filter(|o| presentation::healthy(o)).count();
-                    json!({"name":resource.title,"count":objects.len(),"healthy":healthy,"attention":objects.len()-healthy})
-                }
-                Err(e) => json!({"name":resource.title,"error":e}),
-            };
-            rows.push(row);
-        }
-        for kind in ["nodes", "pods"] {
-            rows.push(
-                match self
-                    .json(&format!("/apis/metrics.k8s.io/v1beta1/{kind}"))
-                    .await
-                {
-                    Ok(value) => json!({"name":format!("{kind} metrics"),"metrics":value}),
-                    Err(e) => json!({"name":format!("{kind} metrics"),"error":e}),
-                },
-            );
-        }
-        rows
     }
     async fn helm(&self) -> Result<Vec<Value>, String> {
         let mut releases = Vec::new();
