@@ -9,7 +9,7 @@ use gpui::component::{
     ActiveTheme, Disableable, Icon, Selectable, Sizable, WindowExt,
     button::{Button, ButtonVariants},
     checkbox::Checkbox,
-    input::{InputEvent, Textarea, TextareaState},
+    input::{EditorState, InputEvent},
     tooltip::Tooltip,
 };
 use gpui::{
@@ -94,7 +94,7 @@ fn read_files(paths: &[PathBuf]) -> Result<Kubeconfig, String> {
 
 pub struct AddCluster {
     manager: Entity<Connections>,
-    yaml: Entity<TextareaState>,
+    yaml: Entity<EditorState>,
     paths: Vec<PathBuf>,
     pasted: bool,
     rows: Vec<Candidate>,
@@ -123,7 +123,7 @@ impl AddCluster {
             .into_iter()
             .map(|path| std::fs::canonicalize(&path).unwrap_or(path))
             .collect();
-        let yaml = cx.new(|cx| TextareaState::new(window, cx).placeholder(
+        let yaml = cx.new(|cx| crate::yaml_editor::state(window, cx).placeholder(
             "apiVersion: v1\nkind: Config\nclusters:\n  - name: my-cluster\n    cluster:\n      server: https://…"));
         let changes = cx.subscribe(&yaml, |this, _, event: &InputEvent, cx| {
             if matches!(event, InputEvent::Change) && this.active && this.pasted {
@@ -439,7 +439,7 @@ impl Render for AddCluster {
                     else { format!("Detected {} with {} contexts. Pick the ones to add.", self.path_label(), self.rows.len()) }))
                     .child(Button::new("browse-kubeconfig").label(if self.pasted { "Load from file…" } else { "Choose file…" }).small()
                         .on_click(cx.listener(|this, _, window, cx| this.browse(window, cx)))))
-                .when(self.pasted, |d| d.child(div().id("kubeconfig-editor").h(px(170.)).flex_shrink_0().child(Textarea::new(&self.yaml).h(px(170.)))))
+                .when(self.pasted, |d| d.child(div().id("kubeconfig-editor").h(px(170.)).flex_shrink_0().child(crate::yaml_editor::editor(&self.yaml, false).h(px(170.)))))
                 .when(!self.error.is_empty(), |d| d.child(div().id("import-error").test_support().text_color(cx.theme().danger).child(self.error.clone())))
                 .when(!self.pasted && !self.error.is_empty(), |d| d.child(Button::new("reload-kubeconfig").label("Reload kubeconfig").small()
                     .on_click(cx.listener(|this, _, _, cx| this.detect(Duration::ZERO, cx)))))

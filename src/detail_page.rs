@@ -8,11 +8,12 @@ use gpui::component::{
     ActiveTheme, Disableable, Selectable, Sizable,
     button::{Button, ButtonVariants},
     collapsible::Collapsible,
+    input::EditorState,
     menu::{DropdownMenu, PopupMenuItem},
 };
 use gpui::{
-    App, Context, FocusHandle, Focusable, IntoElement, Render, ScrollHandle, SharedString, Task,
-    TestSupportExt, Window, div, prelude::*, px,
+    App, AppContext, Context, Entity, FocusHandle, Focusable, IntoElement, Render, ScrollHandle,
+    SharedString, Task, TestSupportExt, Window, div, prelude::*, px,
 };
 use pintle_gpui_kit::{kit as gpui, shell::workspace::Document};
 use serde_json::{Value, json};
@@ -121,6 +122,7 @@ pub struct DetailPage {
     context: String,
     focus: FocusHandle,
     scrolls: [ScrollHandle; 4],
+    yaml_editors: HashMap<&'static str, Entity<EditorState>>,
     _poll: Task<()>,
 }
 impl DetailPage {
@@ -164,6 +166,7 @@ impl DetailPage {
             context: document.context.to_string(),
             focus: cx.focus_handle(),
             scrolls: std::array::from_fn(|_| ScrollHandle::new()),
+            yaml_editors: HashMap::new(),
             _poll: poll,
         }
     }
@@ -189,6 +192,9 @@ impl DetailPage {
             self.stop_logs();
             self.pods_job = None;
             self.revealed = false;
+            if matches!(self.target.key.as_str(), "secrets" | "helm") {
+                self.yaml_editors.clear();
+            }
         }
         cx.notify();
     }
@@ -267,6 +273,7 @@ impl DetailPage {
             }
             Err(e) => {
                 self.revealed = false;
+                self.yaml_editors.clear();
                 self.stop_logs();
                 self.pods_job = None;
                 self.status = if self.detail.is_some() {
@@ -282,6 +289,7 @@ impl DetailPage {
         self.pods_job = None;
         self.pods.clear();
         self.revealed = false;
+        self.yaml_editors.clear();
         self.status = if self.detail.is_some() {
             "Refreshing · showing previous data"
         } else {
@@ -357,6 +365,32 @@ impl DetailPage {
         }
         cx.notify();
     }
+    fn yaml_view(
+        &mut self,
+        id: &'static str,
+        text: String,
+        height: Option<f32>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let editor = self
+            .yaml_editors
+            .entry(id)
+            .or_insert_with(|| cx.new(|cx| crate::yaml_editor::state(window, cx)));
+        if editor.read(cx).value().as_ref() != text {
+            // set_value clears undo history: masked values cannot be recovered with Undo.
+            editor.update(cx, |state, cx| state.set_value(text, window, cx));
+        }
+        div()
+            .id(id)
+            .test_support()
+            .min_h_0()
+            .min_w_0()
+            .when_some(height, |d, height| d.h(px(height)).flex_shrink_0())
+            .when(height.is_none(), |d| d.flex_1().mx_3().mb_3())
+            .child(crate::yaml_editor::editor(editor, true))
+            .into_any_element()
+    }
     fn text_scroll(
         &self,
         id: &'static str,
@@ -426,7 +460,7 @@ impl DetailPage {
             }))
             .into_any_element()
     }
-    fn overview(&self, cx: &Context<Self>) -> gpui::AnyElement {
+    fn overview(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
         let Some(detail) = &self.detail else {
             return self
                 .text_scroll("details-loading", self.status.clone(), 0)
@@ -575,7 +609,13 @@ impl DetailPage {
                     .flex_col()
                     .gap_2()
                     .child(section_title("CONDITIONS", cx))
-                    .child(yaml(&object["status"]["conditions"])),
+                    .child(self.yaml_view(
+                        "conditions-yaml",
+                        yaml(&object["status"]["conditions"]),
+                        Some(160.),
+                        window,
+                        cx,
+                    )),
             );
         }
         body = body.child(
@@ -600,7 +640,13 @@ impl DetailPage {
                         .id("additional-detail-content")
                         .test_support()
                         .pt_3()
-                        .child(yaml(&object)),
+                        .child(self.yaml_view(
+                            "additional-yaml",
+                            yaml(&object),
+                            Some(320.),
+                            window,
+                            cx,
+                        )),
                 ),
         );
         div()
@@ -876,7 +922,7 @@ impl Focusable for DetailPage {
     }
 }
 impl Render for DetailPage {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .id("resource-detail-page")
             .test_support()
@@ -940,6 +986,7 @@ impl Render for DetailPage {
                                     .disabled(self.detail.is_none())
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.revealed = !this.revealed;
+                                        this.yaml_editors.clear();
                                         cx.notify();
                                     })),
                             )
@@ -964,18 +1011,16 @@ impl Render for DetailPage {
                     .child(format!("{} · {}", self.context, self.status)),
             )
             .child(match self.tab {
-                DetailTab::Overview => self.overview(cx),
+                DetailTab::Overview => self.overview(window, cx),
                 DetailTab::Logs => self.logs_view(cx),
-                DetailTab::Yaml => self
-                    .text_scroll(
-                        "resource-yaml",
-                        self.detail
-                            .as_ref()
-                            .map(|d| yaml(&presentation::redact(&d.object, self.revealed)))
-                            .unwrap_or_else(|| self.status.clone()),
-                        2,
-                    )
-                    .into_any_element(),
+                DetailTab::Yaml => {
+                    let text = self
+                        .detail
+                        .as_ref()
+                        .map(|d| yaml(&presentation::redact(&d.object, self.revealed)))
+                        .unwrap_or_else(|| self.status.clone());
+                    self.yaml_view("resource-yaml", text, None, window, cx)
+                }
                 DetailTab::Events => div()
                     .id("detail-events-scroll")
                     .test_support()
@@ -1127,5 +1172,98 @@ mod tests {
             assert!(page.status.starts_with("Stale data"));assert!(page.detail.is_some());assert!(!page.revealed);
             assert!(!yaml(&presentation::redact(&page.detail.as_ref().unwrap().object,page.revealed)).contains("private-value"));
         })).unwrap();
+    }
+    #[gpui_kit::test]
+    fn yaml_editor_is_readonly_and_discards_revealed_buffers(cx: &mut TestAppContext) {
+        let (handle, page) = cx.update(|cx| {
+            crate::initialize(cx);
+            let target = DetailTarget::new("missing".into(), "secrets".into(), &object()).unwrap();
+            let doc = target.document("Test");
+            gpui::open_window(
+                pintle_gpui_kit::shell::workbench::window_options(cx),
+                cx,
+                |_, cx| cx.new(|cx| DetailPage::new(target, &doc, Backend::new(), cx)),
+            )
+            .unwrap()
+        });
+        handle
+            .update(cx, |_, window, cx| {
+                page.update(cx, |page, cx| {
+                    page.set_test_detail(
+                        json!({"kind":"Secret", "metadata":{"name":"api","uid":"uid"},
+                    "data":{"password":"private-value"}}),
+                        json!({"items":[]}),
+                        cx,
+                    );
+                    page.select_tab(DetailTab::Yaml, cx);
+                });
+                window.render_frame(cx);
+                let editor = page.read(cx).yaml_editors["resource-yaml"].clone();
+                assert_eq!(editor.read(cx).language_name(), "yaml");
+                let masked = editor.read(cx).value();
+                assert!(!masked.contains("private-value"));
+                window.click(("input", editor.entity_id()), cx);
+                window.press("secondary-a", cx);
+                window.input("ignored", cx);
+                window.press("backspace", cx);
+                assert_eq!(editor.read(cx).value(), masked);
+                window.press("secondary-c", cx);
+                assert_eq!(
+                    cx.read_from_clipboard().unwrap().text().unwrap(),
+                    masked.to_string()
+                );
+                window.render_frame(cx);
+                assert_eq!(
+                    page.read(cx).yaml_editors["resource-yaml"].entity_id(),
+                    editor.entity_id()
+                );
+                window.click("reveal-values", cx);
+                window.render_frame(cx);
+                assert!(
+                    page.read(cx).yaml_editors["resource-yaml"]
+                        .read(cx)
+                        .value()
+                        .contains("private-value")
+                );
+                window.click("reveal-values", cx);
+                window.render_frame(cx);
+                let masked_editor = page.read(cx).yaml_editors["resource-yaml"].clone();
+                window.click(("input", masked_editor.entity_id()), cx);
+                window.press("secondary-z", cx);
+                assert!(!masked_editor.read(cx).value().contains("private-value"));
+                window.click("reveal-values", cx);
+                window.render_frame(cx);
+                page.update(cx, |page, cx| page.select_tab(DetailTab::Overview, cx));
+                assert!(page.read(cx).revealed);
+                page.update(cx, |page, cx| page.select_tab(DetailTab::Yaml, cx));
+                window.render_frame(cx);
+                page.update(cx, |page, cx| page.set_visible(false, cx));
+                assert!(page.read(cx).yaml_editors.is_empty());
+                assert!(!page.read(cx).revealed);
+            })
+            .unwrap();
+        for dimensions in [
+            gpui::size(px(1440.), px(900.)),
+            gpui::size(px(1024.), px(680.)),
+            gpui::size(px(420.), px(680.)),
+        ] {
+            cx.simulate_window_resize(handle, dimensions);
+            for mode in [
+                pintle_gpui_kit::theme::ThemeMode::Light,
+                pintle_gpui_kit::theme::ThemeMode::Dark,
+            ] {
+                cx.update(|cx| pintle_gpui_kit::theme::set_mode(mode, cx));
+                handle
+                    .update(cx, |_, window, cx| {
+                        page.update(cx, |page, cx| page.set_visible(true, cx));
+                        window.render_frame(cx);
+                        let bounds = window.find("resource-yaml").bounds();
+                        assert!(bounds.size.height > px(100.));
+                        assert!(bounds.size.width <= dimensions.width);
+                        assert!(bounds.bottom() <= dimensions.height);
+                    })
+                    .unwrap();
+            }
+        }
     }
 }

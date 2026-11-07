@@ -51,7 +51,12 @@ required; insecure TLS and endpoint URL path prefixes are not supported.
   Arrow keys navigate the list; Enter opens the selected resource.
 - Details have Overview cards, metadata, labels, annotations, ports, conditions,
   owner references, recent Events, read-only YAML and full Events. Additional
-  resource fields are collapsible. The bottom panel contains activity Output.
+  resource fields are collapsible. YAML uses a monospace editor with line numbers,
+  Tree-sitter syntax highlighting matched to the active light/dark theme,
+  indent guides, search and horizontal scrolling, including
+  the editable kubeconfig import field. Resource YAML remains read-only and
+  sensitive values are masked again when hiding their document tab.
+  The bottom panel contains activity Output.
 - Each detail view retains its own subtab, scroll and log options across docking
   and splits. Refresh preserves older data with an explicit stale/error status
   on failure. UID checks detect resources replaced under the same name.

@@ -38,6 +38,7 @@ mod onboarding;
 mod overview_chart;
 mod overview_page;
 mod resource_page;
+mod yaml_editor;
 use detail_page::{DetailPage, DetailTarget, Routes};
 use overview_page::OverviewPage;
 use resource_page::{Inspect, PanelState, ResourcePage};
