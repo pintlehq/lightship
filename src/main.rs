@@ -41,6 +41,7 @@ mod overview_chart;
 mod overview_page;
 mod resource_page;
 mod yaml_editor;
+mod yaml_page;
 use detail_page::{DetailPage, DetailTarget, Routes};
 use overview_page::OverviewPage;
 use resource_page::{Inspect, PanelState, ResourcePage};
@@ -96,6 +97,22 @@ impl Lightship {
                             guard.update(cx, |page, cx| page.permit_close(window, cx))
                         });
                     }
+                    if let Some((cluster, namespace)) = document.key.0.split_once("/apply-yaml:") {
+                        let page = cx.new(|cx| {
+                            yaml_page::YamlPage::new(
+                                cluster.into(),
+                                document.context.to_string(),
+                                (namespace != "_").then(|| namespace.to_string()),
+                                backend.clone(),
+                                page_panel.clone(),
+                                cx,
+                            )
+                        });
+                        let guard = page.clone();
+                        return WorkspacePage::new(page, cx).before_close(move |window, cx| {
+                            guard.update(cx, |page, cx| page.permit_close(window, cx))
+                        });
+                    }
                     if document
                         .key
                         .0
@@ -109,18 +126,13 @@ impl Lightship {
                             cx,
                         );
                     }
-                    WorkspacePage::new(
-                        cx.new(|cx| {
-                            ResourcePage::new(
-                                document,
-                                page_panel.clone(),
-                                backend.clone(),
-                                window,
-                                cx,
-                            )
-                        }),
-                        cx,
-                    )
+                    let page = cx.new(|cx| {
+                        ResourcePage::new(document, page_panel.clone(), backend.clone(), window, cx)
+                    });
+                    let guard = page.clone();
+                    WorkspacePage::new(page, cx).before_close(move |window, cx| {
+                        guard.update(cx, |page, cx| page.permit_close(window, cx))
+                    })
                 }),
                 window,
                 cx,
@@ -255,6 +267,13 @@ impl Lightship {
                 {
                     page.update(cx, |page, cx| page.set_visible(visible.contains(&view), cx));
                 }
+                if let Some(page) = workspace
+                    .read(cx)
+                    .page(view, cx)
+                    .and_then(|p| p.downcast::<yaml_page::YamlPage>().ok())
+                {
+                    page.update(cx, |page, cx| page.set_visible(visible.contains(&view), cx));
+                }
             }
             this.detail_routes
                 .borrow_mut()
@@ -273,6 +292,7 @@ impl Lightship {
             })
             .collect();
         entries.extend([
+            CommandEntry::new("apply-yaml", "Commands", "Apply YAML…"),
             CommandEntry::new("toggle-sidebar", "Commands", "Toggle Sidebar"),
             CommandEntry::new("toggle-panel", "Commands", "Toggle Panel"),
             CommandEntry::new("toggle-theme", "Commands", "Toggle Appearance"),
@@ -297,6 +317,20 @@ impl Lightship {
                         .filter(|(_, target)| !connections.iter().any(|c| c.id == target.cluster))
                         .map(|(key, _)| key.as_str().into()),
                 );
+                for view in this
+                    .workspace
+                    .read(cx)
+                    .groups(cx)
+                    .into_iter()
+                    .flat_map(|g| g.views)
+                {
+                    if let Some(doc) = this.workspace.read(cx).document(view, cx)
+                        && let Some((id, _)) = doc.key.0.split_once("/apply-yaml:")
+                        && !connections.iter().any(|c| c.id == id)
+                    {
+                        removed.push(doc.key.clone());
+                    }
+                }
                 if !removed.is_empty() {
                     this.workspace.update(cx, |workspace, cx| {
                         workspace.close_resources(
@@ -310,6 +344,27 @@ impl Lightship {
                 this.workspace.update(cx, |workspace, cx| {
                     for document in &docs {
                         workspace.update_document_metadata(document, cx);
+                    }
+                    for view in workspace.groups(cx).into_iter().flat_map(|g| g.views) {
+                        if let Some(document) = workspace.document(view, cx)
+                            && let Some((id, _)) = document.key.0.split_once("/apply-yaml:")
+                            && let Some(connection) = connections.iter().find(|c| c.id == id)
+                        {
+                            let updated = pintle_gpui_kit::shell::workspace::Document::new(
+                                document.key.clone(),
+                                "Apply YAML",
+                                connection.name.clone(),
+                            );
+                            workspace.update_document_metadata(&updated, cx);
+                            if let Some(page) = workspace
+                                .page(view, cx)
+                                .and_then(|p| p.downcast::<yaml_page::YamlPage>().ok())
+                            {
+                                page.update(cx, |page, cx| {
+                                    page.rename(connection.name.clone(), cx)
+                                });
+                            }
+                        }
                     }
                     for target in this.detail_routes.borrow().values() {
                         if let Some(connection) =
@@ -396,6 +451,7 @@ impl Lightship {
     }
     fn commands() -> Vec<CommandEntry> {
         vec![
+            CommandEntry::new("apply-yaml", "Commands", "Apply YAML…"),
             CommandEntry::new("add-cluster", "Commands", "Add Cluster"),
             CommandEntry::new("manage-clusters", "Commands", "Manage Clusters"),
             CommandEntry::new("toggle-sidebar", "Commands", "Toggle Sidebar"),
@@ -499,7 +555,7 @@ impl Lightship {
         window.open_dialog(cx, move |dialog, _, cx| {
             let return_focus = return_focus.clone();
             dialog
-                .title("Manage clusters · Limited data editing")
+                .title("Manage clusters")
                 .width(px(720.))
                 .centered()
                 .font_family(cx.theme().mono_font_family.clone())
@@ -546,6 +602,7 @@ impl Lightship {
                         "toggle-panel" => this.toggle_panel(window, cx),
                         "toggle-theme" => this.toggle_theme(cx),
                         "add-cluster" => this.add_cluster(window, cx),
+                        "apply-yaml" => this.apply_yaml(window, cx),
                         "manage-clusters" => this.manage_clusters(window, cx),
                         _ => {
                             if let Some(doc) = this
@@ -565,6 +622,71 @@ impl Lightship {
                 .into_any_element()
         });
     }
+    fn apply_yaml(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let connections = self.connections.read(cx).settings.connections.clone();
+        let active = self.workspace.read(cx).active_view(cx);
+        let document = active.and_then(|view| self.workspace.read(cx).document(view, cx));
+        let cluster = document
+            .as_ref()
+            .and_then(|doc| doc.key.0.split_once('/'))
+            .map(|(id, _)| id.to_string())
+            .filter(|id| connections.iter().any(|c| c.id == *id))
+            .or_else(|| (connections.len() == 1).then(|| connections[0].id.clone()));
+        if let Some(cluster) = cluster {
+            let namespace = active
+                .and_then(|view| self.workspace.read(cx).page(view, cx))
+                .and_then(|p| {
+                    if let Ok(page) = p.clone().downcast::<ResourcePage>() {
+                        return page.read(cx).table.read(cx).delegate().namespace.clone();
+                    }
+                    if let Ok(page) = p.downcast::<DetailPage>() {
+                        return page.read(cx).target.seed["metadata"]["namespace"]
+                            .as_str()
+                            .map(str::to_owned);
+                    }
+                    None
+                });
+            self.open_resource(
+                &Inspect {
+                    cluster,
+                    key: "apply-yaml".into(),
+                    object: serde_json::json!({"metadata":{"namespace":namespace}}),
+                },
+                window,
+                cx,
+            );
+            return;
+        }
+        let owner = cx.entity();
+        window.open_dialog(cx, move |dialog, _, _| {
+            dialog.title("Choose cluster for Apply YAML").child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .children(connections.iter().map(|connection| {
+                        let owner = owner.clone();
+                        let cluster = connection.id.clone();
+                        Button::new(gpui::SharedString::from(cluster.clone()))
+                            .label(connection.name.clone())
+                            .on_click(move |_, window, cx| {
+                                window.close_dialog(cx);
+                                owner.update(cx, |this, cx| {
+                                    this.open_resource(
+                                        &Inspect {
+                                            cluster: cluster.clone(),
+                                            key: "apply-yaml".into(),
+                                            object: serde_json::json!({}),
+                                        },
+                                        window,
+                                        cx,
+                                    )
+                                });
+                            })
+                    })),
+            )
+        });
+    }
     fn open_resource(&mut self, event: &Inspect, window: &mut Window, cx: &mut Context<Self>) {
         let cluster_name = self
             .connections
@@ -575,6 +697,20 @@ impl Lightship {
             .find(|c| c.id == event.cluster)
             .map(|c| c.name.clone())
             .unwrap_or_else(|| event.cluster.clone());
+        if event.key == "apply-yaml" {
+            let namespace = event.object["metadata"]["namespace"]
+                .as_str()
+                .unwrap_or("_");
+            let document = pintle_gpui_kit::shell::workspace::Document::new(
+                format!("{}/apply-yaml:{namespace}", event.cluster).as_str(),
+                "Apply YAML",
+                cluster_name,
+            );
+            self.workspace.update(cx, |workspace, cx| {
+                workspace.open(document, OpenMode::Permanent, window, cx);
+            });
+            return;
+        }
         if event.key == "overview" {
             if let Some(resource) = catalog::RESOURCES
                 .iter()
@@ -714,7 +850,7 @@ impl Render for Lightship {
                             .items_center()
                             .justify_center()
                             .gap_4()
-                            .child("Lightship · Kubernetes, limited data editing")
+                            .child("Lightship · Kubernetes")
                             .child("Add a cluster to browse resources, events and logs.")
                             .child(
                                 Button::new("add-first-cluster")
@@ -732,7 +868,7 @@ impl Render for Lightship {
                 .activity(activity)
                 .sidebar(chrome::sidebar(
                     "lightship-sidebar",
-                    "Clusters · Limited editing",
+                    "Clusters",
                     div()
                         .size_full()
                         .min_h_0()
@@ -761,7 +897,7 @@ impl Render for Lightship {
                 .panel(self.panel(cx))
                 .status(chrome::status_bar(
                     "Lightship",
-                    "Limited editing · Secret/ConfigMap data",
+                    "YAML apply · Data editing · Restart",
                     cx,
                 )),
             )

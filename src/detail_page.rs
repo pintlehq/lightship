@@ -126,6 +126,8 @@ pub struct DetailPage {
     scrolls: [ScrollHandle; 4],
     pub(crate) data_editor: Option<Entity<crate::data_editor::DataEditor>>,
     seen_data_revision: u64,
+    seen_mutation_revision: u64,
+    yaml_draft: Option<Entity<crate::yaml_page::YamlPage>>,
     data_subscription: Option<gpui::Subscription>,
     pub(crate) output: Option<Entity<crate::inspector::PanelState>>,
     yaml_editors: HashMap<&'static str, Entity<EditorState>>,
@@ -177,6 +179,8 @@ impl DetailPage {
             data_editor: None,
             data_subscription: None,
             seen_data_revision: 0,
+            seen_mutation_revision: 0,
+            yaml_draft: None,
             output: None,
             _poll: poll,
         }
@@ -185,12 +189,15 @@ impl DetailPage {
     pub fn set_test_detail(&mut self, object: Value, events: Value, cx: &mut Context<Self>) {
         self.job = None;
         self.detail = Some(Detail { object, events });
-        self.status = "Read-only".into();
+        self.status = "Loaded".into();
         cx.notify();
     }
     pub fn rename(&mut self, document: &Document, cx: &mut Context<Self>) {
         if self.context != document.context.as_ref() {
             self.context = document.context.to_string();
+            if let Some(yaml) = &self.yaml_draft {
+                yaml.update(cx, |yaml, cx| yaml.rename(document.context.to_string(), cx));
+            }
             cx.notify();
         }
     }
@@ -200,6 +207,9 @@ impl DetailPage {
         }
         self.visible = visible;
         if !visible {
+            if let Some(yaml) = &self.yaml_draft {
+                yaml.update(cx, |yaml, cx| yaml.hide(cx));
+            }
             if let Some(data) = &self.data_editor {
                 data.update(cx, |data, cx| data.hide(cx));
             }
@@ -219,6 +229,23 @@ impl DetailPage {
         }
     }
     fn poll(&mut self, cx: &mut Context<Self>) {
+        if self
+            .yaml_draft
+            .as_ref()
+            .is_some_and(|yaml| yaml.read(cx).completed)
+        {
+            self.yaml_draft = None;
+            self.refresh(cx);
+        }
+        let revision = self.backend.mutation_revision(&self.target.cluster);
+        if revision != self.seen_mutation_revision {
+            self.seen_mutation_revision = revision;
+            self.job = Some(self.backend.detail(
+                &self.target.cluster,
+                &self.target.key,
+                self.target.seed.clone(),
+            ));
+        }
         if let Some(data) = &self.data_editor {
             data.update(cx, |data, cx| data.poll(cx));
         }
@@ -236,6 +263,14 @@ impl DetailPage {
             {
                 if let Some(data) = &self.data_editor {
                     data.update(cx, |data, cx| data.accept_external(&update.object, cx));
+                }
+                if let Some(yaml) = &self.yaml_draft {
+                    yaml.update(cx, |yaml, cx| {
+                        yaml.accept_external(&update.object, cx);
+                        if self.target.key == "secrets" {
+                            yaml.hide(cx);
+                        }
+                    });
                 }
                 if let Some(detail) = &mut self.detail
                     && (detail.object["metadata"]["resourceVersion"] == update.before_version
@@ -312,14 +347,25 @@ impl DetailPage {
                     &self.target.cluster,
                     std::slice::from_mut(&mut detail.object),
                 );
+                if let Some(yaml) = &self.yaml_draft {
+                    yaml.update(cx, |yaml, cx| yaml.accept_external(&detail.object, cx));
+                }
+                if let Some(data) = &self.data_editor {
+                    data.update(cx, |data, cx| data.accept_external(&detail.object, cx));
+                }
                 self.detail = Some(detail);
-                self.status = "Read-only".into();
+                self.status = "Loaded".into();
                 if self.visible && self.tab == DetailTab::Logs {
                     self.load_pods(cx);
                 }
             }
             Err(e) => {
                 self.revealed = false;
+                if self.target.key == "secrets"
+                    && let Some(yaml) = &self.yaml_draft
+                {
+                    yaml.update(cx, |yaml, cx| yaml.hide(cx));
+                }
                 self.yaml_editors.clear();
                 self.stop_logs();
                 self.pods_job = None;
@@ -332,6 +378,9 @@ impl DetailPage {
         }
     }
     pub fn permit_close(&self, window: &mut Window, cx: &mut App) -> Task<bool> {
+        if let Some(yaml) = &self.yaml_draft {
+            return yaml.update(cx, |yaml, cx| yaml.permit_close(window, cx));
+        }
         self.data_editor
             .as_ref()
             .map(|data| data.update(cx, |data, cx| data.permit_close(window, cx)))
@@ -344,6 +393,7 @@ impl DetailPage {
                 let _ = owner.update(cx, |this, cx| {
                     this.data_editor = None;
                     this.data_subscription = None;
+                    this.yaml_draft = None;
                     this.refresh(cx);
                 });
             }
@@ -351,6 +401,15 @@ impl DetailPage {
         .detach();
     }
     fn data_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        if self.yaml_draft.as_ref().is_some_and(|yaml| {
+            yaml.read(cx).dirty() || yaml.read(cx).busy() || yaml.read(cx).unresolved()
+        }) {
+            return div()
+                .p_4()
+                .child("Finish the YAML draft or Reset and Refresh before editing Data.")
+                .into_any_element();
+        }
+        self.yaml_draft = None;
         if self.data_editor.is_none() {
             if self.job.is_some() {
                 return div().p_4().child(self.status.clone()).into_any_element();
@@ -429,6 +488,16 @@ impl DetailPage {
                 data.update(cx, |data, cx| data.hide(cx));
             }
         }
+        if matches!(self.target.key.as_str(), "secrets" | "helm")
+            && self.tab == DetailTab::Yaml
+            && self.yaml_draft.is_some()
+        {
+            self.revealed = false;
+            self.yaml_editors.clear();
+            if let Some(yaml) = &self.yaml_draft {
+                yaml.update(cx, |yaml, cx| yaml.hide(cx));
+            }
+        }
         self.tab = tab;
         if tab == DetailTab::Logs {
             self.load_pods(cx);
@@ -484,6 +553,84 @@ impl DetailPage {
             self.log_status = "Reading logs…".into();
         }
         cx.notify();
+    }
+    fn begin_yaml(&mut self, cx: &mut Context<Self>) {
+        if self.target.key == "helm"
+            || self.yaml_draft.is_some()
+            || self
+                .data_editor
+                .as_ref()
+                .is_some_and(|data| data.read(cx).dirty() || data.read(cx).busy())
+            || (self.target.key == "secrets" && !self.revealed)
+        {
+            return;
+        }
+        let Some(detail) = &self.detail else {
+            return;
+        };
+        let Some(output) = &self.output else {
+            return;
+        };
+        self.data_editor = None;
+        self.data_subscription = None;
+        let draft = cx.new(|cx| {
+            let mut page = crate::yaml_page::YamlPage::new(
+                self.target.cluster.clone(),
+                self.cluster_name.clone(),
+                None,
+                self.backend.clone(),
+                output.clone(),
+                cx,
+            );
+            page.edit(self.target.key.clone(), detail.object.clone());
+            page
+        });
+        self.yaml_draft = Some(draft);
+        cx.notify();
+    }
+    fn resource_yaml(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        if let Some(draft) = &self.yaml_draft {
+            return draft.clone().into_any_element();
+        }
+        let text = self
+            .detail
+            .as_ref()
+            .map(|d| yaml(&presentation::redact(&d.object, self.revealed)))
+            .unwrap_or_else(|| self.status.clone());
+        let blocked = self
+            .data_editor
+            .as_ref()
+            .is_some_and(|data| data.read(cx).dirty() || data.read(cx).busy());
+        div()
+            .flex_1()
+            .min_h_0()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .when(self.target.key != "helm", |d| {
+                d.child(
+                    div()
+                        .px_3()
+                        .pb_2()
+                        .child(
+                            Button::new("edit-resource-yaml")
+                                .label("Edit YAML")
+                                .small()
+                                .disabled(
+                                    self.detail.is_none()
+                                        || self.job.is_some()
+                                        || blocked
+                                        || (self.target.key == "secrets" && !self.revealed),
+                                )
+                                .on_click(cx.listener(|this, _, _, cx| this.begin_yaml(cx))),
+                        )
+                        .when(blocked, |d| {
+                            d.child("Apply or Reset the Data draft before editing YAML.")
+                        }),
+                )
+            })
+            .child(self.yaml_view("resource-yaml", text, None, window, cx))
+            .into_any_element()
     }
     fn yaml_view(
         &mut self,
@@ -1098,7 +1245,8 @@ impl Render for DetailPage {
                     .child(div().flex_1())
                     .when(
                         matches!(self.target.key.as_str(), "secrets" | "helm")
-                            && self.tab != DetailTab::Data,
+                            && self.tab != DetailTab::Data
+                            && !(self.tab == DetailTab::Yaml && self.yaml_draft.is_some()),
                         |d| {
                             d.child(
                                 Button::new("reveal-values")
@@ -1112,6 +1260,11 @@ impl Render for DetailPage {
                                     .disabled(self.detail.is_none())
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.revealed = !this.revealed;
+                                        if !this.revealed
+                                            && let Some(yaml) = &this.yaml_draft
+                                        {
+                                            yaml.update(cx, |yaml, cx| yaml.hide(cx));
+                                        }
                                         this.yaml_editors.clear();
                                         cx.notify();
                                     })),
@@ -1139,8 +1292,8 @@ impl Render for DetailPage {
                     .child(format!(
                         "{} · {}",
                         self.context,
-                        if self.tab == DetailTab::Data && self.status == "Read-only" {
-                            "Limited editing · Data only"
+                        if self.tab == DetailTab::Data && self.status == "Loaded" {
+                            "Data editing"
                         } else {
                             &self.status
                         }
@@ -1150,14 +1303,7 @@ impl Render for DetailPage {
                 DetailTab::Overview => self.overview(window, cx),
                 DetailTab::Data => self.data_view(window, cx),
                 DetailTab::Logs => self.logs_view(cx),
-                DetailTab::Yaml => {
-                    let text = self
-                        .detail
-                        .as_ref()
-                        .map(|d| yaml(&presentation::redact(&d.object, self.revealed)))
-                        .unwrap_or_else(|| self.status.clone());
-                    self.yaml_view("resource-yaml", text, None, window, cx)
-                }
+                DetailTab::Yaml => self.resource_yaml(window, cx),
                 DetailTab::Events => div()
                     .id("detail-events-scroll")
                     .test_support()
@@ -1402,5 +1548,52 @@ mod tests {
                     .unwrap();
             }
         }
+    }
+    #[gpui_kit::test]
+    fn secret_yaml_edit_requires_reveal_hides_on_tab_change_and_excludes_server_fields(
+        cx: &mut TestAppContext,
+    ) {
+        let secret = json!({"apiVersion":"v1","kind":"Secret","metadata":{"name":"credentials","namespace":"apps","uid":"secret-id","resourceVersion":"1","managedFields":[{"manager":"other"}]},"data":{"token":"cHJpdmF0ZQ=="},"status":{"ignored":true}});
+        let (handle, page) = cx.update(|cx| {
+            crate::initialize(cx);
+            let target = DetailTarget::new("missing".into(), "secrets".into(), &secret).unwrap();
+            let document = target.document("Test");
+            gpui::open_window(
+                pintle_gpui_kit::shell::workbench::window_options(cx),
+                cx,
+                |_, cx| {
+                    cx.new(|cx| {
+                        let mut page = DetailPage::new(target, &document, Backend::new(), cx);
+                        page.output = Some(cx.new(|_| crate::inspector::PanelState::default()));
+                        page.set_test_detail(secret, json!({"items":[]}), cx);
+                        page
+                    })
+                },
+            )
+            .unwrap()
+        });
+        handle
+            .update(cx, |_, window, cx| {
+                page.update(cx, |page, cx| {
+                    page.select_tab(DetailTab::Yaml, cx);
+                    page.begin_yaml(cx);
+                    assert!(page.yaml_draft.is_none());
+                    page.revealed = true;
+                    page.begin_yaml(cx);
+                    assert!(page.yaml_draft.is_some());
+                    assert!(page.data_editor.is_none());
+                });
+                window.render_frame(cx);
+                assert!(!window.find_all("yaml-mutation-page").is_empty());
+                assert!(window.find_all("reveal-values").is_empty());
+                page.update(cx, |page, cx| {
+                    page.select_tab(DetailTab::Overview, cx);
+                    assert!(!page.revealed);
+                    page.select_tab(DetailTab::Yaml, cx);
+                });
+                window.render_frame(cx);
+                assert!(!window.find_all("reveal-yaml-draft").is_empty());
+            })
+            .unwrap();
     }
 }

@@ -1,6 +1,6 @@
 # Lightship
 
-A Kubernetes desktop application with limited Secret/ConfigMap data editing, using the public `pintle_gpui_kit`
+A Kubernetes desktop application with YAML apply/editing, workload/Pod restart and Secret/ConfigMap data editing, using the public `pintle_gpui_kit`
 facade. Rust **1.99.0**, GPUI Kit **0.8.1**, and the kit's verified Git revision
 remain pinned. The installed Electron `/Applications/Lightship.app` is a reference;
 this application has a separate identity and settings directory.
@@ -50,12 +50,13 @@ required; insecure TLS and endpoint URL path prefixes are not supported.
   list retains its filters, sorting, checkbox selection and scroll position.
   Arrow keys navigate the list; Enter opens the selected resource.
 - Details have Overview cards, metadata, labels, annotations, ports, conditions,
-  owner references, recent Events, read-only YAML and full Events. Additional
+  owner references, recent Events, YAML viewing/editing and full Events. Additional
   resource fields are collapsible. YAML uses a monospace editor with line numbers,
   Tree-sitter syntax highlighting matched to the active light/dark theme,
   indent guides, search and horizontal scrolling, including
-  the editable kubeconfig import field. Resource YAML remains read-only and
-  sensitive values are masked again when hiding their document tab.
+  the editable kubeconfig import field. Resource YAML starts read-only; choose
+  **Edit YAML** to create a draft. Sensitive values are masked again when hiding
+  their document tab.
   The bottom panel contains activity Output.
 - Each detail view retains its own subtab, scroll and log options across docking
   and splits. Refresh preserves older data with an explicit stale/error status
@@ -85,15 +86,64 @@ required; insecure TLS and endpoint URL path prefixes are not supported.
   for an empty release list.
 - Secrets and potentially sensitive Helm payloads are hidden until **Reveal**.
   Hiding/closing its document resets reveal state. No payload is logged.
-- Checkboxes offer **Copy names** and clear selection only. There is no create,
-  bulk edit, delete, scale, restart, exec, attach, terminal, proxy or port-forward command.
+- Checkboxes offer **Copy names**, **Restart** for supported types, and clear selection.
+  Restart includes selected rows hidden by filters and reviews every target first.
 
 The HTTP boundary allows GET for registered discovery/resource paths and Pod logs.
-All other writes remain blocked except exact, typed JSON Patch requests produced
-by the Data editor for a namespaced Secret or ConfigMap. The boundary verifies the
-sealed request's method, target, content type and payload digest. UID and
-resourceVersion tests make the patch conditional; type, metadata and immutable
-flags are never edited. There is no terminal, exec, attach, proxy or port-forward.
+Writes require typed backend operations with exact, session-bound permits checking
+method, URI/query, content type and payload digest. Unsealed writes, subresources
+other than Pod logs, exec, attach, terminal, proxy and port-forward remain blocked.
+Disconnect/reconnect revokes permits from the previous session.
+
+## Apply and edit YAML
+
+Choose **Apply YAML…** in a resource list or the command palette. The permanent
+workspace document accepts pasted YAML/JSON or **Open file…**, including multiple
+YAML documents and Kubernetes Lists (up to 4 MiB of UTF-8 source). Each document/split
+owns its memory-only draft. The cluster is fixed for that document. Namespaces use
+manifest metadata first, then the originating list filter, then the connection's
+default namespace. Cluster-scoped resources must omit namespace metadata.
+
+Apply validates all documents and resolves exact API versions/kinds through discovery
+before reviewing cluster, kind, namespace and name. APIs/CRDs must already be served;
+install a CRD separately before applying its custom resources. Server-Side Apply uses
+field manager `lightship`, strict field validation and no force takeover. Secret
+`stringData` is normalized into Base64 `data` before submission. Resource status and
+server-owned metadata are omitted. Existing targets carry the reviewed UID/version.
+Documents are applied in order, stopping at the first failure; previous successes
+are retained and remaining targets are marked skipped. There is no rollback.
+
+In resource details, **Edit YAML** creates a single-resource draft. Identity is locked;
+status and server-owned metadata are excluded. **Apply** performs a full resource
+update conditional on the loaded UID/resourceVersion. Use the standalone Apply YAML
+flow for declarative Server-Side Apply. Helm release payloads remain read-only.
+Secret YAML must be revealed before editing. Data and YAML drafts cannot write
+concurrently within a detail view. External changes retain drafts and require Reset
+and Refresh before editing again. Reset, Refresh and normal close/remove/quit paths
+confirm before discarding drafts; requests in progress must finish before closing.
+Hidden YAML draft editors are discarded with their undo history; the draft remains
+only in memory and can be explicitly revealed again. No draft is persisted.
+
+Timeout/transport failures trigger GET-only read-back. Unresolved results disable
+Apply/Restart and provide **Check result**; no write is retried automatically. RBAC,
+conflicts and validation failures retain drafts. Activity Output records targets and
+statuses only, never YAML, Secret values or API response bodies.
+
+## Bulk restart
+
+Select Deployments, StatefulSets, DaemonSets or Pods and choose **Restart**. Workloads
+receive a JSON Patch changing only the Pod template's `kubectl.kubernetes.io/restartedAt`
+annotation, guarded by UID/resourceVersion tests. Paused Deployments, OnDelete workload
+strategies and terminating resources are skipped with an explanation.
+
+Pod restart is a graceful DELETE with UID/resourceVersion preconditions, using the
+normal grace period. Its controller must create a replacement. Confirmation warns
+that unmanaged Pods may never return, Job Pods may rerun work or have no replacement,
+and direct deletion bypasses PodDisruptionBudgets. Static/mirror Pods are unsupported.
+Requests run sequentially, continuing after target-specific failures and stopping
+unsent operations if their connection is revoked. Only successful targets are cleared
+from selection. **Restart requested** means the API accepted the request, not that a
+replacement or rollout is Ready. Lists and other detail views refresh after mutations.
 
 ## Edit Secret and ConfigMap data
 
@@ -112,7 +162,8 @@ back before a manual retry can be offered. Closing documents, removing a
 connection and normal window/quit actions confirm before discarding drafts.
 Other views receive successful updates without overwriting their own drafts.
 Activity Output contains targets/counts/status only, never values or API bodies.
-Data-write tests use mock servers exclusively; live smoke tests remain read-only.
+All mutation tests use mock servers exclusively; live smoke tests remain read-only.
+Never use production `cpjobs` for mutation development or testing.
 
 ## Build and validate
 

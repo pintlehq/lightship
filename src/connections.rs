@@ -162,7 +162,7 @@ impl Connections {
         self.settings.dark = dark;
         self.persist();
     }
-    /// Persist an already reviewed import atomically, then start connections with limited data editing.
+    /// Persist an already reviewed import atomically, then start guarded connections.
     pub fn import(
         &mut self,
         source: Option<&Source>,

@@ -229,6 +229,7 @@ fn network_mock_pagination_details_and_readonly_requests() {
         .with_layer(&tower::filter::FilterLayer::new(move |r| guard.check(r)))
         .build();
         let session = Session {
+            discovery: Mutex::default(),
             client,
             specs: vec![],
             policy,
@@ -371,6 +372,7 @@ fn install_mock(
     backend.sessions.lock().unwrap().insert(
         "test".into(),
         Arc::new(Session {
+            discovery: Mutex::default(),
             client,
             specs: vec![],
             policy,

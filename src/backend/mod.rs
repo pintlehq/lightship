@@ -1,7 +1,8 @@
-//! Kubernetes service with a narrow data-editing boundary. Raw clients never leave this module.
+//! Kubernetes service with typed, reviewed mutation boundaries. Raw clients never leave this module.
 pub mod config;
 pub mod data;
 mod details;
+pub mod mutation;
 pub mod overview;
 mod policy;
 pub mod presentation;
@@ -123,6 +124,7 @@ pub struct Backend {
 }
 struct Session {
     client: Client,
+    discovery: Mutex<HashMap<String, Vec<mutation::Discovered>>>,
     specs: Vec<Spec>,
     policy: policy::Policy,
     cancelled: watch::Sender<bool>,
@@ -227,6 +229,7 @@ impl Backend {
             backend.sessions.lock().unwrap().insert(
                 connection.id,
                 Arc::new(Session {
+                    discovery: Mutex::default(),
                     client,
                     specs: specs.clone(),
                     policy,
@@ -285,7 +288,7 @@ impl Backend {
                     let spec = backend.spec(&id, &key);
                     if key == "helm" { let objects = session.helm().await?; let _ = sender.send(Some(Ok(Snapshot { objects, status: "Read-only · refreshed every 30s".into() }))); tokio::time::sleep(Duration::from_secs(30)).await; return Ok(()); }
                     let (mut objects, version) = session.list(&spec, None).await?;
-                    let _ = sender.send(Some(Ok(Snapshot { objects: objects.clone(), status: "Read-only · watching".into() })));
+                    let _ = sender.send(Some(Ok(Snapshot { objects: objects.clone(), status: "Connected · watching".into() })));
                     let url = format!("{}?watch=true&allowWatchBookmarks=true&timeoutSeconds=60&resourceVersion={}", spec.collection(None), encode(&version));
                     let stream = match session.client.request_stream(get(&url)).await {
                         Ok(stream) => stream,
@@ -302,7 +305,7 @@ impl Backend {
                             Some("ERROR") => return Err("Watch failed · retrying".into()),
                             _ => continue,
                         }
-                        let _ = sender.send(Some(Ok(Snapshot { objects: objects.clone(), status: "Read-only · watching".into() })));
+                        let _ = sender.send(Some(Ok(Snapshot { objects: objects.clone(), status: "Connected · watching".into() })));
                         // A removed/replaced connection must not keep delivering its old session.
                         if backend.session(&id).is_err() { return Err("Disconnected".into()); }
                     }

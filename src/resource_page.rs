@@ -2,7 +2,7 @@ use crate::backend::{Backend, Job, Snapshot, presentation};
 use crate::catalog::{self, Resource, Row};
 use gpui::base::ElementExt;
 use gpui::component::{
-    ActiveTheme, IconName, Sizable, WindowExt,
+    ActiveTheme, Disableable, IconName, Sizable, WindowExt,
     button::{Button, ButtonVariants},
     checkbox::Checkbox,
     input::{Input, InputEvent, InputState},
@@ -434,6 +434,14 @@ pub struct ResourcePage {
     job: Job<Snapshot>,
     title: String,
     seen_data_revision: u64,
+    seen_mutation_revision: u64,
+    restart_prepare: Option<Job<crate::backend::mutation::Prepared>>,
+    restart_ready: Option<crate::backend::mutation::Prepared>,
+    restart_job: Option<Job<crate::backend::mutation::BatchReport>>,
+    restart_report: Option<crate::backend::mutation::BatchReport>,
+    restart_confirming: bool,
+    restart_task: Option<Task<()>>,
+    restart_status: String,
     _poll: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
@@ -478,6 +486,13 @@ impl ResourcePage {
                 timer.timer(Duration::from_millis(100)).await;
                 if entity
                     .update(cx, |this, cx| {
+                        this.poll_restart(cx);
+                        let cluster = this.table.read(cx).delegate().cluster.clone();
+                        let mutation_revision = this.backend.mutation_revision(&cluster);
+                        if this.seen_mutation_revision != mutation_revision {
+                            this.seen_mutation_revision = mutation_revision;
+                            this.refresh(cx);
+                        }
                         let (revision, updates) =
                             this.backend.data_updates(this.seen_data_revision);
                         this.seen_data_revision = revision;
@@ -544,6 +559,14 @@ impl ResourcePage {
             filter,
             compact_actions: false,
             seen_data_revision: 0,
+            seen_mutation_revision: 0,
+            restart_prepare: None,
+            restart_ready: None,
+            restart_job: None,
+            restart_report: None,
+            restart_confirming: false,
+            restart_task: None,
+            restart_status: String::new(),
             action_focus: std::array::from_fn(|_| cx.focus_handle()),
             backend,
             job,
@@ -565,6 +588,118 @@ impl ResourcePage {
             cx.notify();
         });
         self.table.focus_handle(cx).focus(window, cx);
+    }
+    fn restart_busy(&self) -> bool {
+        self.restart_prepare.is_some() || self.restart_confirming || self.restart_job.is_some()
+    }
+    pub fn permit_close(&self, _: &mut Window, _: &mut App) -> Task<bool> {
+        Task::ready(!self.restart_busy())
+    }
+    fn restart(&mut self, cx: &mut Context<Self>) {
+        if self.restart_busy()
+            || self
+                .restart_report
+                .as_ref()
+                .is_some_and(|r| r.check.is_some())
+        {
+            return;
+        }
+        let rows = self.table.read(cx).delegate();
+        let objects = rows
+            .rows
+            .iter()
+            .filter(|row| rows.selected.contains(&row.id))
+            .filter_map(|row| rows.objects.get(&row.id).cloned())
+            .collect();
+        self.restart_prepare = Some(self.backend.prepare_restart(
+            &rows.cluster,
+            &rows.key,
+            objects,
+        ));
+        self.restart_report = None;
+        self.restart_status = "Reviewing selected targets · no writes sent".into();
+        cx.notify();
+    }
+    fn poll_restart(&mut self, cx: &mut Context<Self>) {
+        if let Some(result) = self.restart_prepare.as_mut().and_then(Job::take) {
+            self.restart_prepare = None;
+            match result {
+                Ok(plan) => {
+                    self.restart_ready = Some(plan);
+                    self.restart_confirming = true;
+                }
+                Err(e) => self.restart_status = e,
+            }
+            cx.notify();
+        }
+        if let Some(result) = self.restart_job.as_mut().and_then(Job::take) {
+            self.restart_job = None;
+            match result {
+                Ok(mut report) => {
+                    if let Some(old) = self.restart_report.take() {
+                        for item in old.items {
+                            if !report.items.iter().any(|r| r.target == item.target) {
+                                report.items.push(item);
+                            }
+                        }
+                    }
+                    self.restart_status = report.text();
+                    self.table.update(cx, |table, cx| {
+                        let rows = table.delegate_mut();
+                        for item in &report.items {
+                            if item.outcome == crate::backend::mutation::Outcome::Succeeded {
+                                let ids: Vec<_> = rows
+                                    .objects
+                                    .iter()
+                                    .filter(|(_, o)| {
+                                        o["metadata"]["uid"].as_str() == item.uid.as_deref()
+                                    })
+                                    .map(|(id, _)| id.clone())
+                                    .collect();
+                                for id in ids {
+                                    rows.selected.remove(&id);
+                                }
+                            }
+                        }
+                        cx.notify();
+                    });
+                    self.restart_report = Some(report);
+                }
+                Err(e) => self.restart_status = e,
+            }
+            let panel = self.table.read(cx).delegate().panel.clone();
+            let message = format!("Bulk restart · {} · {}", self.title, self.restart_status);
+            panel.update(cx, |panel, cx| panel.record(message, cx));
+            self.refresh(cx);
+            cx.notify();
+        }
+    }
+    fn confirm_restart(
+        &mut self,
+        plan: crate::backend::mutation::Prepared,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let answer = crate::confirm::ask(
+            "Restart selected resources?",
+            plan.review(&self.title),
+            "Restart",
+            window,
+            cx,
+        );
+        self.restart_task = Some(cx.spawn_in(window, async move |owner, cx| {
+            let accepted = answer.await;
+            let _ = owner.update(cx, |this, cx| {
+                this.restart_confirming = false;
+                if accepted {
+                    this.restart_job = Some(this.backend.execute_mutation(plan));
+                    this.restart_status = "Requesting restart…".into();
+                } else {
+                    this.restart_status = "Cancelled · no writes sent".into();
+                }
+                cx.notify();
+            });
+        }));
     }
     fn bulk_bar(&self, cx: &Context<Self>) -> impl IntoElement {
         let rows = self.table.read(cx).delegate();
@@ -598,22 +733,59 @@ impl ResourcePage {
                             .child(format!("{hidden} hidden by filters")),
                     )
                 }),
-            Button::new("bulk-copy-names")
-                .label("Copy names")
-                .small()
-                .ghost()
-                .track_focus(&self.action_focus[0])
-                .on_click(cx.listener(|page, _, _, cx| {
-                    let rows = page.table.read(cx).delegate();
-                    let names = rows
-                        .rows
-                        .iter()
-                        .filter(|r| rows.selected.contains(&r.id))
-                        .map(|r| r.name.clone())
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    cx.write_to_clipboard(ClipboardItem::new_string(names));
-                })),
+            div()
+                .flex()
+                .min_w_0()
+                .items_center()
+                .gap_1()
+                .when(
+                    matches!(
+                        rows.key.as_str(),
+                        "deployments" | "statefulsets" | "daemonsets" | "pods"
+                    ),
+                    |d| {
+                        d.child(
+                            Button::new("bulk-restart")
+                                .label("Restart")
+                                .small()
+                                .ghost()
+                                .track_focus(&self.action_focus[1])
+                                .disabled(
+                                    self.restart_busy()
+                                        || self
+                                            .restart_report
+                                            .as_ref()
+                                            .is_some_and(|r| r.check.is_some()),
+                                )
+                                .on_click(cx.listener(|this, _, _, cx| this.restart(cx))),
+                        )
+                    },
+                )
+                .child(
+                    Button::new("bulk-copy-names")
+                        .label(if self.compact_actions {
+                            ""
+                        } else {
+                            "Copy names"
+                        })
+                        .when(self.compact_actions, |button| button.icon(IconName::Copy))
+                        .accessibility_label("Copy names")
+                        .tooltip("Copy names")
+                        .small()
+                        .ghost()
+                        .track_focus(&self.action_focus[0])
+                        .on_click(cx.listener(|page, _, _, cx| {
+                            let rows = page.table.read(cx).delegate();
+                            let names = rows
+                                .rows
+                                .iter()
+                                .filter(|r| rows.selected.contains(&r.id))
+                                .map(|r| r.name.clone())
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            cx.write_to_clipboard(ClipboardItem::new_string(names));
+                        })),
+                ),
             Button::new("bulk-clear")
                 .icon(IconName::Close)
                 .small()
@@ -651,21 +823,30 @@ impl Focusable for ResourcePage {
     }
 }
 impl Render for ResourcePage {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(plan) = self.restart_ready.take() {
+            let owner = cx.entity();
+            window.defer(cx, move |window, cx| {
+                owner.update(cx, |this, cx| this.confirm_restart(plan, window, cx))
+            });
+        }
         let rows = self.table.read(cx).delegate();
         let resource = rows.resource;
         let title = self.title.clone();
-        let summary = if rows.status.starts_with("Read-only") {
+        let summary = if rows.status.starts_with("Connected") {
+            "Watching"
+        } else if rows.status.starts_with("Read-only") {
             "Read-only"
         } else if rows.status.starts_with("Watch unavailable") {
-            "Read-only · polling"
+            "Polling"
         } else if rows.status.starts_with("Loading") {
             "Loading…"
         } else {
             "Unavailable / stale"
         };
         let status = rows.status.clone();
-        let failed = !rows.status.starts_with("Read-only")
+        let failed = !rows.status.starts_with("Connected")
+            && !rows.status.starts_with("Read-only")
             && !rows.status.starts_with("Watch unavailable")
             && !rows.status.starts_with("Loading");
         let count = format!("{} items · {summary}", rows.visible.len());
@@ -715,6 +896,30 @@ impl Render for ResourcePage {
             .h(px(32.))
             .accessibility_label("Refresh resources")
             .on_click(cx.listener(|this, _, _, cx| this.refresh(cx)));
+        let apply = Button::new("apply-yaml")
+            .label(if compact {
+                "Apply YAML"
+            } else {
+                "Apply YAML…"
+            })
+            .small()
+            .h(px(32.))
+            .on_click(cx.listener(|this, _, _, cx| {
+                let rows = this.table.read(cx).delegate();
+                let (panel, cluster, namespace) = (
+                    rows.panel.clone(),
+                    rows.cluster.clone(),
+                    rows.namespace.clone(),
+                );
+                panel.update(cx, |panel, cx| {
+                    panel.inspect(
+                        cluster,
+                        "apply-yaml".into(),
+                        serde_json::json!({"metadata":{"namespace":namespace}}),
+                        cx,
+                    )
+                });
+            }));
         let toolbar = div()
             .flex()
             .flex_wrap()
@@ -723,6 +928,7 @@ impl Render for ResourcePage {
             .min_w_0()
             .child(div().flex_1().min_w(px(90.)).child(filter))
             .when(resource.namespaced, |toolbar| toolbar.child(namespaces))
+            .child(apply)
             .child(refresh);
         div()
             .id(("resource-page", cx.entity_id()))
@@ -798,6 +1004,41 @@ impl Render for ResourcePage {
                     .child(count),
                 toolbar,
             ))
+            .when(!self.restart_status.is_empty(), |d| {
+                d.child(
+                    div()
+                        .id("bulk-restart-status")
+                        .test_support()
+                        .max_h(px(130.))
+                        .overflow_y_scroll()
+                        .text_size(px(12.))
+                        .child(self.restart_status.clone())
+                        .when(
+                            self.restart_report
+                                .as_ref()
+                                .is_some_and(|r| r.check.is_some()),
+                            |d| {
+                                d.child(
+                                    Button::new("check-restart-result")
+                                        .label("Check result")
+                                        .small()
+                                        .disabled(self.restart_busy())
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            if let Some(plan) = this
+                                                .restart_report
+                                                .as_ref()
+                                                .and_then(|r| r.check.clone())
+                                            {
+                                                this.restart_job =
+                                                    Some(this.backend.check_mutation(plan));
+                                                cx.notify();
+                                            }
+                                        })),
+                                )
+                            },
+                        ),
+                )
+            })
             .when(failed, |d| {
                 d.child(
                     div()
@@ -812,5 +1053,147 @@ impl Render for ResourcePage {
                         .when(selected, |table| table.floating_actions(self.bulk_bar(cx))),
                 ),
             )
+    }
+}
+
+#[cfg(test)]
+mod mutation_tests {
+    use super::*;
+    use crate::backend::tests::{await_result, mock_backend};
+    use core::prelude::v1::test;
+    use gpui::{AnyWindowHandle, TestAppContext, size, test::TestWindowExt};
+    use serde_json::{Value, json};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    fn objects() -> Vec<Value> {
+        ["api","worker"].iter().map(|name| json!({"apiVersion":"apps/v1","kind":"Deployment","metadata":{"name":name,"namespace":"apps","uid":format!("uid-{name}"),"resourceVersion":"1"},"spec":{"template":{"metadata":{"annotations":{}}}}})).collect()
+    }
+    fn open(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<ResourcePage>, Arc<AtomicUsize>) {
+        let writes = Arc::new(AtomicUsize::new(0));
+        let count = writes.clone();
+        let backend = mock_backend(move |r| {
+            if r.method() != http::Method::GET {
+                count.fetch_add(1, Ordering::SeqCst);
+                if r.uri().path().ends_with("/worker") {
+                    return (
+                        403,
+                        json!({"kind":"Status","apiVersion":"v1","status":"Failure","code":403})
+                            .to_string(),
+                    );
+                }
+                return (200, objects()[0].to_string());
+            }
+            if let Some(object) = objects().into_iter().find(|o| {
+                r.uri()
+                    .path()
+                    .ends_with(&format!("/{}", o["metadata"]["name"].as_str().unwrap()))
+            }) {
+                return (200, object.to_string());
+            }
+            (200,json!({"apiVersion":"apps/v1","kind":"DeploymentList","metadata":{"resourceVersion":"1"},"items":objects()}).to_string())
+        });
+        let (handle, page) = cx.update(|cx| {
+            crate::initialize(cx);
+            let panel = cx.new(|_| PanelState::default());
+            let document = Document::new("test/deployments", "Deployments", "Test");
+            gpui::open_window(gpui::WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| ResourcePage::new(&document, panel, backend, window, cx))
+            })
+            .unwrap()
+        });
+        handle
+            .update(cx, |_, _, cx| {
+                page.read(cx).table.clone().update(cx, |table, cx| {
+                    let rows = table.delegate_mut();
+                    rows.replace(Snapshot {
+                        objects: objects(),
+                        status: "Connected · fixture".into(),
+                    });
+                    rows.selected = rows.rows.iter().map(|r| r.id.clone()).collect();
+                    rows.query = "api".into();
+                    rows.rebuild();
+                    cx.notify();
+                })
+            })
+            .unwrap();
+        (handle, page, writes)
+    }
+    #[gpui_kit::test]
+    fn restart_reviews_hidden_selection_cancel_sends_nothing_and_partial_success_retains_failures(
+        cx: &mut TestAppContext,
+    ) {
+        let (handle, page, writes) = open(cx);
+        handle
+            .update(cx, |_, window, cx| {
+                page.update(cx, |page, cx| {
+                    page.restart(cx);
+                    let plan = await_result(page.restart_prepare.as_mut().unwrap()).unwrap();
+                    page.restart_prepare = None;
+                    assert!(plan.review("Test").contains("api"));
+                    assert!(plan.review("Test").contains("worker"));
+                    page.restart_confirming = true;
+                    page.confirm_restart(plan, window, cx);
+                });
+                window.render_frame(cx);
+                window.click("confirm-cancel", cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(writes.load(Ordering::SeqCst), 0);
+        handle
+            .update(cx, |_, window, cx| {
+                page.update(cx, |page, cx| {
+                    assert_eq!(page.table.read(cx).delegate().selected.len(), 2);
+                    page.restart(cx);
+                    let plan = await_result(page.restart_prepare.as_mut().unwrap()).unwrap();
+                    page.restart_prepare = None;
+                    page.restart_confirming = true;
+                    page.confirm_restart(plan, window, cx);
+                });
+                window.render_frame(cx);
+                window.click("confirm-accept", cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        handle
+            .update(cx, |_, _, cx| {
+                let start = std::time::Instant::now();
+                while page.read(cx).restart_job.is_some() {
+                    page.update(cx, |page, cx| page.poll_restart(cx));
+                    assert!(start.elapsed() < Duration::from_secs(5));
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                let rows = page.read(cx).table.read(cx).delegate();
+                assert_eq!(writes.load(Ordering::SeqCst), 2);
+                assert_eq!(rows.selected.len(), 1);
+                assert!(rows.selected.contains("test/uid-worker"));
+            })
+            .unwrap();
+    }
+    #[gpui_kit::test]
+    fn restart_controls_fit_light_dark_and_small_panes(cx: &mut TestAppContext) {
+        let (handle, _, writes) = open(cx);
+        for mode in [
+            pintle_gpui_kit::theme::ThemeMode::Light,
+            pintle_gpui_kit::theme::ThemeMode::Dark,
+        ] {
+            for (width, height) in [(1440., 900.), (1024., 680.), (440., 680.)] {
+                cx.simulate_window_resize(handle, size(px(width), px(height)));
+                handle
+                    .update(cx, |_, window, cx| {
+                        pintle_gpui_kit::theme::set_mode(mode, cx);
+                        window.render_frame(cx);
+                        window.render_frame(cx);
+                        let bar = window.find("floating-action-bar").bounds();
+                        let restart = window.find("bulk-restart").bounds();
+                        let clear = window.find("bulk-clear").bounds();
+                        let viewport = window.find("resource-table-viewport").bounds();
+                        assert!(restart.left() >= bar.left() && restart.right() <= bar.right());
+                        assert!(clear.left() >= bar.left() && clear.right() <= bar.right());
+                        assert!(bar.left() >= viewport.left() && bar.right() <= viewport.right());
+                    })
+                    .unwrap();
+            }
+        }
+        assert_eq!(writes.load(Ordering::SeqCst), 0);
     }
 }

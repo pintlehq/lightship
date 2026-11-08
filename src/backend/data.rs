@@ -204,6 +204,7 @@ pub struct DataUpdate {
 }
 #[derive(Default)]
 pub(super) struct DataUpdates {
+    pub(super) mutations: std::collections::HashMap<String, u64>,
     revision: u64,
     pub(super) items: std::collections::VecDeque<(u64, DataUpdate)>,
 }
@@ -270,6 +271,7 @@ impl Backend {
                 .is_ok_and(|current| Arc::ptr_eq(&current, session))
         {
             let mut updates = self.data_updates.lock().unwrap();
+            *updates.mutations.entry(id.to_string()).or_default() += 1;
             updates.revision += 1;
             let revision = updates.revision;
             updates.items.push_back((
@@ -447,6 +449,7 @@ mod tests {
     #[test]
     fn only_the_sealed_exact_patch_can_pass_the_http_boundary() {
         let policy = policy::Policy::default();
+        policy.register("/api/v1/secrets".into());
         let edit = edit(&resource());
         let request = policy.data_patch(&edit).unwrap();
         let payload: Value = serde_json::from_slice(request.body()).unwrap();
@@ -472,15 +475,11 @@ mod tests {
             .body(kube::client::Body::from(b"[]".to_vec()))
             .unwrap();
         assert!(policy.check(wrong).is_err());
+        let revoked_request = policy.data_patch(&edit).unwrap();
         policy.revoke();
         assert!(
             policy
-                .check(
-                    policy
-                        .data_patch(&edit)
-                        .unwrap()
-                        .map(kube::client::Body::from)
-                )
+                .check(revoked_request.map(kube::client::Body::from))
                 .is_err()
         );
     }
@@ -625,6 +624,7 @@ mod tests {
             backend.sessions.lock().unwrap().insert(
                 "test".into(),
                 Arc::new(Session {
+                    discovery: Mutex::default(),
                     client,
                     policy,
                     specs: vec![],

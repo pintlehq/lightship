@@ -1,4 +1,4 @@
-//! Final request boundary. Only typed Secret/ConfigMap data patches may write.
+//! Final request boundary. Writes require an exact, session-bound typed permit.
 use futures::FutureExt;
 use http::{Method, Request};
 use kube::client::Body;
@@ -6,8 +6,11 @@ use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
 #[derive(Clone)]
-struct DataPermit {
-    path: String,
+struct WritePermit {
+    session: Arc<std::sync::atomic::AtomicBool>,
+    method: Method,
+    uri: http::Uri,
+    content_type: String,
     digest: [u8; 32],
 }
 #[derive(Clone, Default)]
@@ -110,26 +113,63 @@ impl Policy {
             operations.push(serde_json::json!({"op":"add","path":"/binaryData","value":edit.values.map(edit.target.kind,true)}));
         }
         let path = edit.target.path();
-        let mut request = Request::patch(&path)
-            .header("Content-Type", "application/json-patch+json")
-            .body(serde_json::to_vec(&operations).map_err(|_| "Could not encode data patch")?)
-            .map_err(|_| "Invalid data patch target")?;
+        self.seal(
+            Method::PATCH,
+            &path,
+            "application/json-patch+json",
+            serde_json::to_vec(&operations).map_err(|_| "Could not encode data patch")?,
+        )
+    }
+    // Kept private to the backend: callers must first construct a typed operation.
+    pub(super) fn seal(
+        &self,
+        method: Method,
+        uri: &str,
+        content_type: &str,
+        body: Vec<u8>,
+    ) -> Result<Request<Vec<u8>>, String> {
+        let mut request = Request::builder()
+            .method(method.clone())
+            .uri(uri)
+            .header("Content-Type", content_type)
+            .body(body)
+            .map_err(|_| "Invalid mutation request")?;
+        if !self.active()
+            || !self.allows(
+                &Method::GET,
+                request
+                    .uri()
+                    .path()
+                    .parse()
+                    .as_ref()
+                    .map_err(|_| "Invalid target")?,
+            )
+        {
+            return Err("Mutation target unavailable or connection changed".into());
+        }
         let digest = Sha256::digest(request.body()).into();
-        request.extensions_mut().insert(DataPermit { path, digest });
+        let uri = request.uri().clone();
+        request.extensions_mut().insert(WritePermit {
+            session: self.revoked.clone(),
+            method,
+            uri,
+            content_type: content_type.into(),
+            digest,
+        });
         Ok(request)
     }
     pub fn check(&self, request: Request<Body>) -> Result<Request<Body>, tower::BoxError> {
-        let data_write = self.active()
-            && request.method() == Method::PATCH
+        let typed_write = self.active()
             && request.uri().scheme().is_none()
             && request.uri().authority().is_none()
-            && request.uri().query().is_none()
-            && request
-                .headers()
-                .get("Content-Type")
-                .is_some_and(|v| v == "application/json-patch+json")
-            && request.extensions().get::<DataPermit>().is_some_and(|p| {
-                p.path == request.uri().path()
+            && request.extensions().get::<WritePermit>().is_some_and(|p| {
+                Arc::ptr_eq(&self.revoked, &p.session)
+                    && p.method == *request.method()
+                    && p.uri == *request.uri()
+                    && request
+                        .headers()
+                        .get("Content-Type")
+                        .is_some_and(|v| v == p.content_type.as_str())
                     && request
                         .body()
                         .try_clone()
@@ -140,7 +180,7 @@ impl Policy {
                             })
                         })
             });
-        if self.allows(request.method(), request.uri()) || data_write {
+        if self.allows(request.method(), request.uri()) || typed_write {
             Ok(request)
         } else {
             Err(std::io::Error::new(

@@ -1054,3 +1054,52 @@ fn removing_connection_confirms_data_drafts_before_changing_settings(cx: &mut Te
         );
     });
 }
+
+#[gpui_kit::test]
+fn apply_yaml_toolbar_opens_permanent_document_with_namespace_and_independent_split(
+    cx: &mut TestAppContext,
+) {
+    let (handle, app) = open(cx);
+    let workspace = cx.update(|cx| app.read(cx).workspace.clone());
+    step(cx, handle, |window, cx| {
+        active_page(&app, cx).update(cx, |page, cx| page.set_namespace(Some("apps".into()), cx));
+        window.render_frame(cx);
+        window.click("apply-yaml", cx);
+    });
+    let mut original = None;
+    step(cx, handle, |window, cx| {
+        let view = workspace.read(cx).active_view(cx).unwrap();
+        assert!(!workspace.read(cx).is_preview(view, cx));
+        assert_eq!(
+            workspace
+                .read(cx)
+                .document(view, cx)
+                .unwrap()
+                .key
+                .0
+                .as_ref(),
+            "Development/apply-yaml:apps"
+        );
+        let page = workspace
+            .read(cx)
+            .page(view, cx)
+            .unwrap()
+            .downcast::<yaml_page::YamlPage>()
+            .unwrap();
+        original = Some(page.entity_id());
+        workspace.update(cx, |workspace, cx| {
+            workspace.split(view, SplitDirection::Right, window, cx)
+        });
+    });
+    step(cx, handle, |_, cx| {
+        let view = workspace.read(cx).active_view(cx).unwrap();
+        let page = workspace
+            .read(cx)
+            .page(view, cx)
+            .unwrap()
+            .downcast::<yaml_page::YamlPage>()
+            .unwrap();
+        assert_ne!(Some(page.entity_id()), original);
+        assert!(!page.read(cx).dirty());
+    });
+}
