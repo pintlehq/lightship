@@ -234,6 +234,8 @@ fn network_mock_pagination_details_and_readonly_requests() {
             specs: vec![],
             policy,
             cancelled: watch::channel(false).0,
+            server: String::new(),
+            version: String::new(),
             health: Mutex::new("Connected · Read-only".into()),
         };
         let (rows, version) = session.list(&builtin("pods"), None).await.unwrap();
@@ -334,6 +336,7 @@ pub(crate) fn mock_backend_on(
 ) -> Arc<Backend> {
     install_mock(
         Arc::new(Backend {
+            read_only: Default::default(),
             runtime,
             sessions: Mutex::new(HashMap::new()),
             overviews: Mutex::new(HashMap::new()),
@@ -347,12 +350,13 @@ fn install_mock(
     handler: impl Fn(&http::Request<kube::client::Body>) -> (u16, String) + Send + Sync + 'static,
 ) -> Arc<Backend> {
     let _entered = backend.runtime.enter();
-    let policy = policy::Policy::default();
+    let policy = policy::Policy::with_read_only(backend.read_only.clone());
     for r in crate::catalog::RESOURCES {
         policy.register(builtin(r.key).collection(None));
     }
     policy.register(builtin("replicasets").collection(None));
     policy.register("/apis/metrics.k8s.io/v1beta1/nodes".into());
+    policy.register("/apis/metrics.k8s.io/v1beta1/pods".into());
     let guard = policy.clone();
     let handler = Arc::new(handler);
     let service = tower::service_fn(move |request: http::Request<kube::client::Body>| {
@@ -377,6 +381,8 @@ fn install_mock(
             specs: vec![],
             policy,
             cancelled: watch::channel(false).0,
+            server: String::new(),
+            version: String::new(),
             health: Mutex::new("Connected · Read-only".into()),
         }),
     );

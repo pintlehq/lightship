@@ -25,9 +25,12 @@ fn controlled_by(object: &Value, owners: &HashSet<String>) -> bool {
 }
 impl Session {
     pub(super) async fn detail_for(&self, spec: &Spec, seed: Value) -> Result<Detail, String> {
+        let mut revisions = Vec::new();
         let mut object = if spec.key == "helm" {
-            self.helm()
-                .await?
+            let releases = self.helm().await?;
+            revisions=releases.iter().filter(|r|r["name"]==seed["name"] && r["metadata"]["namespace"]==seed["metadata"]["namespace"]).map(|r|json!({"metadata":{"name":r["metadata"]["name"],"namespace":r["metadata"]["namespace"],"uid":r["metadata"]["uid"]},"kind":"HelmRelease","name":r["name"],"version":r["version"],"status":r["info"]["status"]})).collect();
+            revisions.sort_by_key(|r| std::cmp::Reverse(r["version"].as_u64()));
+            releases
                 .into_iter()
                 .find(|release| {
                     release["metadata"]["uid"] == seed["metadata"]["uid"]
@@ -64,7 +67,118 @@ impl Session {
         } else {
             json!({"items": []})
         };
-        Ok(Detail { object, events })
+        let mut sections = Vec::new();
+        let name = object["metadata"]["name"].as_str().unwrap_or("");
+        match spec.key.as_str() {
+            "pods" => {
+                let rows = object["spec"]["containers"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|c| {
+                        let status = object["status"]["containerStatuses"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .find(|s| s["name"] == c["name"]);
+                        format!(
+                            "{}   {}   {}",
+                            c["name"].as_str().unwrap_or("—"),
+                            c["image"].as_str().unwrap_or("—"),
+                            if status.is_some_and(|s| s["ready"] == true) {
+                                "Ready"
+                            } else {
+                                "Not ready"
+                            }
+                        )
+                    })
+                    .collect();
+                sections.push(("Containers".into(), rows));
+            }
+            "nodes" => {
+                let mut capacity = Vec::new();
+                for field in ["cpu", "memory", "pods", "ephemeral-storage"] {
+                    if let Some(total) = object["status"]["capacity"][field].as_str() {
+                        capacity.push(format!(
+                            "{field}  {} allocatable / {total} capacity",
+                            object["status"]["allocatable"][field]
+                                .as_str()
+                                .unwrap_or("—")
+                        ));
+                    }
+                }
+                sections.push(("Capacity and allocatable".into(), capacity));
+                let assigned = self
+                    .list_scoped(
+                        &builtin("pods"),
+                        None,
+                        None,
+                        Some(&format!("spec.nodeName={name}")),
+                    )
+                    .await;
+                sections.push((
+                    "Pods on this node".into(),
+                    assigned
+                        .map(|(pods, _)| {
+                            pods.iter()
+                                .map(|p| {
+                                    format!(
+                                        "{} / {}",
+                                        p["metadata"]["namespace"].as_str().unwrap_or("—"),
+                                        p["metadata"]["name"].as_str().unwrap_or("—")
+                                    )
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_else(|e| vec![e]),
+                ));
+            }
+            "namespaces" => {
+                for (key, title) in [
+                    ("pods", "Pods"),
+                    ("resourcequotas", "Resource quotas"),
+                    ("limitranges", "Limit ranges"),
+                    ("networkpolicies", "Network policies"),
+                ] {
+                    let result = self
+                        .list_scoped(&builtin(key), Some(name), None, None)
+                        .await;
+                    let rows = result
+                        .map(|(items, _)| {
+                            items
+                                .iter()
+                                .map(|i| {
+                                    let name = i["metadata"]["name"].as_str().unwrap_or("—");
+                                    match key {
+                                        "pods" => format!(
+                                            "{}   {}",
+                                            name,
+                                            i["status"]["phase"].as_str().unwrap_or("—")
+                                        ),
+                                        "resourcequotas" => format!(
+                                            "{}   used {} / hard {}",
+                                            name, i["status"]["used"], i["spec"]["hard"]
+                                        ),
+                                        "limitranges" => {
+                                            format!("{}   {}", name, i["spec"]["limits"])
+                                        }
+                                        _ => name.to_owned(),
+                                    }
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_else(|e| vec![e]);
+                    sections.push((title.into(), rows));
+                }
+            }
+            _ => {}
+        }
+        Ok(Detail {
+            object,
+            events,
+            sections,
+            revisions,
+        })
     }
     pub(super) async fn related_pods(
         &self,

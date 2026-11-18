@@ -20,7 +20,7 @@ configurations produce a warning instead of a guessed duplicate result. Header a
 footer remain visible while long context lists and plugin reviews scroll. Cancel,
 close and Escape discard the import form and restore focus.
 
-**Manage clusters** is a separate dialog, also available through the command palette,
+**Manage clusters** opens a workspace tab, also available through the command palette,
 for reconnecting, renaming and removing saved connections. The application never
 changes the original kubeconfig or its current context. Display names can be changed
 independently of stable connection IDs. **Remove from app** removes only local
@@ -43,7 +43,7 @@ required; insecure TLS and endpoint URL path prefixes are not supported.
 
 - Core resources, workloads, networking, configuration, storage, RBAC and Events.
 - API discovery adds available resource types beneath Custom Resources.
-- Namespace and text filters, numeric sorting, retained preview/permanent tabs,
+- Namespace, status and text filters, numeric sorting, permanent sidebar tabs,
   independent splits, resizable columns and virtualized tables.
 - Click a resource row or **View details** to open a permanent document tab.
   Reopening the same resource in a pane selects its existing tab. The original
@@ -57,7 +57,7 @@ required; insecure TLS and endpoint URL path prefixes are not supported.
   the editable kubeconfig import field. Resource YAML starts read-only; choose
   **Edit YAML** to create a draft. Sensitive values are masked again when hiding
   their document tab.
-  The bottom panel contains activity Output.
+  The bottom panel holds cluster terminals and activity Output. History stores up to 500 activity records, with filtering, JSON export and clearing.
 - Each detail view retains its own subtab, scroll and log options across docking
   and splits. Refresh preserves older data with an explicit stale/error status
   on failure. UID checks detect resources replaced under the same name.
@@ -75,7 +75,7 @@ required; insecure TLS and endpoint URL path prefixes are not supported.
   for init/sidecar containers, Pod-level resources, overhead and in-place resize.
 - Overview keeps real observations for the last 30 minutes, sampled every 30 seconds,
   with at most 61 buckets. One sampler serves all Overview tabs/splits per connection.
-  Closing the last Overview stops polling while retaining its bounded in-memory
+  The status bar also subscribes to the active cluster. Closing the final subscriber stops polling while retaining its bounded in-memory
   history; reconnect/removal clears it. Manual refresh preserves history. There is
   no historical backfill, disk cache or generated data; unsampled/failed intervals
   remain gaps. Stale (>90 seconds), incomplete or inaccessible metrics remain
@@ -91,9 +91,16 @@ required; insecure TLS and endpoint URL path prefixes are not supported.
 
 The HTTP boundary allows GET for registered discovery/resource paths and Pod logs.
 Writes require typed backend operations with exact, session-bound permits checking
-method, URI/query, content type and payload digest. Unsealed writes, subresources
-other than Pod logs, exec, attach, terminal, proxy and port-forward remain blocked.
-Disconnect/reconnect revokes permits from the previous session.
+method, URI/query, content type and payload digest. Disconnecting revokes the previous session's permits.
+
+## Cluster tools
+
+- Choose **Scale** or **Delete** on a row or selection to review the affected objects. The Namespaces page also supports creation and typed-name deletion. Nodes offer **Cordon**, **Uncordon** and **Drain**. Drain uses Kubernetes evictions, respects disruption budgets and reports Pods that prevent eviction.
+- From Pod details, choose a container in **Logs** to open an interactive shell. The lower panel supports multiple cluster terminal sessions. These tools require a locally installed `kubectl`. Sessions use the reviewed context and its credential configuration.
+- **Port forward** starts a local IPv4 loopback listener. Enter a remote port and optionally a local port. The Port forwards tab shows the assigned port and can stop the process.
+- Choose **Logs** for up to 16 Pods to combine their timestamped streams. Find, wrap, pause and container selection apply to the log tab.
+- **Read-only** blocks application write requests and opening new shells. Existing external shell sessions retain their own permissions.
+- Choose **Settings** for appearance and keyboard shortcuts. The system option follows the macOS theme.
 
 ## Apply and edit YAML
 
@@ -157,7 +164,7 @@ operation. Immutable resources remain read-only.
 Drafts are memory-only and independent per document/split. Reset discards local
 edits after confirmation. Apply reviews changed key names (never Secret values),
 then writes only resource data. RBAC and version conflicts preserve the draft;
-there is no force overwrite or automatic write retry. Uncertain results are read
+the merge review combines independent edits and offers a per-key choice for conflicting edits. Apply the merged draft after review. Uncertain results are read
 back before a manual retry can be offered. Closing documents, removing a
 connection and normal window/quit actions confirm before discarding drafts.
 Other views receive successful updates without overwriting their own drafts.

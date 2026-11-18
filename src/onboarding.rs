@@ -705,13 +705,19 @@ mod tests {
         step(cx, handle, |window, cx| {
             assert!(window.find_all("use-yaml").is_empty());
             assert!(!window.find_all("reconnect:stable-id").is_empty());
-            window.click("cluster-display-name", cx);
-            window.input("Renamed", cx);
             window.click("rename:stable-id", cx);
+            window.click("cluster-display-name", cx);
+            window.press("secondary-a", cx);
+            window.input("Renamed", cx);
+            window.click("save-cluster-name", cx);
             let manager = app.read(cx).connections.read(cx);
             assert_eq!(manager.settings.connections[0].name, "Renamed");
             assert_eq!(manager.settings.connections[0].id, "stable-id");
             window.click("remove:stable-id", cx);
+            window.click("confirm-accept", cx);
+        });
+        cx.run_until_parked();
+        step(cx, handle, |_, cx| {
             assert!(
                 app.read(cx)
                     .connections

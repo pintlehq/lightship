@@ -8,7 +8,7 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use gpui::assets::IconName;
 use gpui::base::ElementExt;
 use gpui::component::{
-    ActiveTheme, Disableable, Icon, Selectable,
+    ActiveTheme, Disableable, Icon, Selectable, Sizable,
     button::{Button, ButtonVariants},
     input::{EditorState, Input, InputEvent, InputState},
     menu::{DropdownMenu, PopupMenuItem},
@@ -59,6 +59,8 @@ pub struct DataEditor {
     error: String,
     status: String,
     blocked: bool,
+    latest: Option<(DataTarget, DataValues)>,
+    choices: std::collections::BTreeMap<String, bool>,
     unknown: Option<DataEdit>,
     job: Option<Job<ApplyReport>>,
     focus: FocusHandle,
@@ -114,6 +116,8 @@ impl DataEditor {
             error: String::new(),
             status: String::new(),
             blocked: false,
+            latest: None,
+            choices: Default::default(),
             unknown: None,
             job: None,
             focus: cx.focus_handle(),
@@ -181,10 +185,10 @@ impl DataEditor {
             return;
         }
         if self.busy() || self.dirty() {
+            self.capture_latest(object);
             self.blocked = true;
             self.status =
-                "Resource changed in another view · draft retained; Reset and Refresh before Apply"
-                    .into();
+                "Resource changed in another view · review latest data before Apply".into();
             cx.notify();
             return;
         }
@@ -201,6 +205,58 @@ impl DataEditor {
             self.immutable = object["immutable"] == true;
             cx.notify();
         }
+    }
+    fn capture_latest(&mut self, object: &Value) {
+        if object["metadata"]["uid"] != self.target.uid || object["immutable"] == true {
+            self.latest = None;
+            return;
+        }
+        if let (Ok(target), Ok(values)) = (
+            DataTarget::from_object(self.target.kind.key(), object),
+            DataValues::read(self.target.kind, object),
+        ) {
+            if self
+                .latest
+                .as_ref()
+                .is_none_or(|(old, _)| old.version != target.version)
+            {
+                self.choices.clear();
+            }
+            self.latest = Some((target, values));
+        }
+    }
+    fn stage_merge(&mut self, discard: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((target, latest)) = self.latest.clone() else {
+            return;
+        };
+        let values = if discard {
+            latest.clone()
+        } else {
+            let Ok(mine) = self.values() else { return };
+            let (merged, unresolved) = merge_values(&self.baseline, &mine, &latest, &self.choices);
+            if !unresolved.is_empty() {
+                return;
+            }
+            merged
+        };
+        self.baseline = latest;
+        self.target = target;
+        self.fields = fields(&values);
+        self.selected = 0;
+        self.latest = None;
+        self.choices.clear();
+        self.revealed = false;
+        self.blocked = false;
+        self.clear_editor();
+        self.sync_name(window, cx);
+        self.validate();
+        self.status = if discard {
+            "Latest data loaded"
+        } else {
+            "Merged draft ready for review"
+        }
+        .into();
+        cx.notify();
     }
     fn values(&self) -> Result<DataValues, String> {
         let mut values = DataValues::default();
@@ -297,26 +353,25 @@ impl DataEditor {
         if self.immutable || self.busy() || self.blocked || !self.dirty() {
             return;
         }
-        let changes = self
-            .fields
-            .iter()
-            .filter_map(|f| {
-                let old = if f.binary {
-                    &self.baseline.binary
-                } else {
-                    &self.baseline.text
-                };
-                match &f.original {
-                    None => Some(format!("Added: {}", f.name)),
-                    Some(name) if name != &f.name => Some(format!("Renamed: {name} → {}", f.name)),
-                    Some(name) if old.get(name) != f.bytes().ok().as_ref() => {
-                        Some(format!("Updated: {}", f.name))
-                    }
-                    _ => None,
+        let mut changes = Vec::new();
+        for (before, after) in [
+            (&self.baseline.text, &values.text),
+            (&self.baseline.binary, &values.binary),
+        ] {
+            let keys = before
+                .keys()
+                .chain(after.keys())
+                .collect::<std::collections::BTreeSet<_>>();
+            for key in keys {
+                match (before.get(key), after.get(key)) {
+                    (None, Some(_)) => changes.push(format!("Added: {key}")),
+                    (Some(_), None) => changes.push(format!("Removed: {key}")),
+                    (Some(a), Some(b)) if a != b => changes.push(format!("Updated: {key}")),
+                    _ => {}
                 }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+            }
+        }
+        let changes = changes.join("\n");
         let edit = DataEdit {
             target: self.target.clone(),
             values,
@@ -450,12 +505,18 @@ impl DataEditor {
                 } else {
                     self.unknown = None;
                 }
-                if let Some(object) = report.object
+                if report.state == ApplyState::Conflict {
+                    if let Some(object) = report.object.as_ref() {
+                        self.capture_latest(object);
+                    }
+                } else if let Some(object) = report.object
                     && let (Ok(target), Ok(values)) = (
                         DataTarget::from_object(self.target.kind.key(), &object),
                         DataValues::read(self.target.kind, &object),
                     )
                 {
+                    self.latest = None;
+                    self.choices.clear();
                     self.target = target;
                     self.baseline = values.clone();
                     self.fields = fields(&values);
@@ -471,7 +532,8 @@ impl DataEditor {
         }
         if let Some(panel) = &self.panel {
             panel.update(cx, |panel, cx| {
-                panel.record(
+                panel.activity(
+                    &self.cluster,
                     format!(
                         "Data Apply · {} / {} / {} · {} keys · {}",
                         self.context,
@@ -600,6 +662,52 @@ fn fields(values: &DataValues) -> Vec<Field> {
         })
         .collect()
 }
+fn merge_values(
+    base: &DataValues,
+    mine: &DataValues,
+    latest: &DataValues,
+    choices: &std::collections::BTreeMap<String, bool>,
+) -> (DataValues, Vec<String>) {
+    fn entry<'a>(values: &'a DataValues, key: &str) -> Option<(bool, &'a Vec<u8>)> {
+        values
+            .text
+            .get(key)
+            .map(|v| (false, v))
+            .or_else(|| values.binary.get(key).map(|v| (true, v)))
+    }
+    let keys = [base, mine, latest]
+        .into_iter()
+        .flat_map(|v| v.text.keys().chain(v.binary.keys()))
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut merged = DataValues::default();
+    let mut unresolved = Vec::new();
+    for key in keys {
+        let (a, b, c) = (entry(base, key), entry(mine, key), entry(latest, key));
+        let take = if a == b || b == c {
+            c
+        } else if a == c {
+            b
+        } else {
+            match choices.get(key) {
+                Some(true) if !latest.binary.contains_key(key) => b,
+                Some(false) => c,
+                _ => {
+                    unresolved.push(key.clone());
+                    c
+                }
+            }
+        };
+        if let Some((binary, bytes)) = take {
+            let map = if binary {
+                &mut merged.binary
+            } else {
+                &mut merged.text
+            };
+            map.insert(key.clone(), bytes.clone());
+        }
+    }
+    (merged, unresolved)
+}
 impl Render for DataEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.poll(cx);
@@ -617,7 +725,8 @@ impl Render for DataEditor {
             self.sync_name(window, cx);
         }
         let busy = self.busy();
-        let readonly = self.immutable || busy || self.unknown.is_some();
+        let readonly =
+            self.immutable || busy || self.unknown.is_some() || self.backend.is_read_only();
         let compact = self.compact;
         let measure = cx.weak_entity();
         let hidden = self.target.kind == DataKind::Secret && !self.revealed;
@@ -823,6 +932,71 @@ impl Render for DataEditor {
                             .on_click(cx.listener(|this, _, window, cx| this.review(window, cx))),
                     ),
             )
+            .when_some(self.latest.as_ref(), |d, (_, latest)| {
+                let mut conflicts = Vec::new();
+                let valid = self.values().is_ok_and(|mine| {
+                    let (_, all) = merge_values(&self.baseline, &mine, latest, &Default::default());
+                    conflicts = all;
+                    conflicts.iter().all(|k| self.choices.contains_key(k))
+                });
+                d.child(
+                    div()
+                        .id("merge-review")
+                        .max_h(px(200.))
+                        .overflow_y_scroll()
+                        .p_2()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child("Review changed keys")
+                        .children(conflicts.into_iter().map(|key| {
+                            let picked = self.choices.get(&key).copied();
+                            div()
+                                .flex()
+                                .gap_2()
+                                .items_center()
+                                .child(div().flex_1().child(key.clone()))
+                                .children([(true, "Keep mine"), (false, "Use latest")].map(
+                                    |(mine, label)| {
+                                        let key = key.clone();
+                                        Button::new(SharedString::from(format!("{label}:{key}")))
+                                            .small()
+                                            .ghost()
+                                            .selected(picked == Some(mine))
+                                            .label(label)
+                                            .disabled(mine && latest.binary.contains_key(&key))
+                                            .on_click(cx.listener(move |p, _, _, cx| {
+                                                p.choices.insert(key.clone(), mine);
+                                                cx.notify()
+                                            }))
+                                    },
+                                ))
+                        }))
+                        .child(
+                            div()
+                                .flex()
+                                .gap_2()
+                                .child(
+                                    Button::new("stage-merge")
+                                        .small()
+                                        .disabled(!valid || busy)
+                                        .label("Continue with merged draft")
+                                        .on_click(
+                                            cx.listener(|p, _, w, cx| p.stage_merge(false, w, cx)),
+                                        ),
+                                )
+                                .child(
+                                    Button::new("discard-mine")
+                                        .small()
+                                        .disabled(busy)
+                                        .label("Discard draft and use latest")
+                                        .on_click(
+                                            cx.listener(|p, _, w, cx| p.stage_merge(true, w, cx)),
+                                        ),
+                                ),
+                        ),
+                )
+            })
             .when(self.immutable, |d| {
                 d.child(div().px_3().py_2().child("Immutable · data is read-only"))
             })
@@ -886,6 +1060,37 @@ impl Render for DataEditor {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn merge_combines_disjoint_changes_and_requires_a_choice_for_conflicts() {
+        let values = |a: &str, b: &str| {
+            let mut v = DataValues::default();
+            v.text.insert("a".into(), a.as_bytes().to_vec());
+            v.text.insert("b".into(), b.as_bytes().to_vec());
+            v
+        };
+        let base = values("original", "original");
+        let mine = values("draft", "original");
+        let (merged, conflicts) = merge_values(
+            &base,
+            &mine,
+            &values("original", "server"),
+            &Default::default(),
+        );
+        assert!(conflicts.is_empty());
+        assert!(merged == values("draft", "server"));
+        let server = values("theirs", "server");
+        let (_, conflicts) = merge_values(&base, &mine, &server, &Default::default());
+        assert_eq!(conflicts, ["a"]);
+        let (merged, conflicts) = merge_values(
+            &base,
+            &mine,
+            &server,
+            &[("a".into(), true)].into_iter().collect(),
+        );
+        assert!(conflicts.is_empty());
+        assert!(merged == values("draft", "server"));
+    }
+
     use super::*;
     use gpui::{AnyWindowHandle, TestAppContext, WindowOptions, size, test::TestWindowExt};
     fn object(secret: bool) -> Value {

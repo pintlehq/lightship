@@ -11,11 +11,21 @@ pub(super) struct Discovered {
     verbs: Vec<String>,
 }
 #[derive(Clone)]
+pub enum AdminAction {
+    Scale(u32),
+    Cordon(bool),
+    Delete(Option<String>),
+}
+#[derive(Clone)]
 enum Change {
+    CreateNamespace,
     Apply,
     Replace,
     Restart,
     DeletePod,
+    Delete,
+    Scale,
+    Scheduling,
     Skip(String),
 }
 #[derive(Clone)]
@@ -272,7 +282,7 @@ impl Backend {
             .copied()
             .unwrap_or(0)
     }
-    fn mutation_changed(&self, id: &str) {
+    pub(super) fn mutation_changed(&self, id: &str) {
         *self
             .data_updates
             .lock()
@@ -280,6 +290,21 @@ impl Backend {
             .mutations
             .entry(id.into())
             .or_default() += 1;
+    }
+    pub fn prepare_namespace(&self, id: &str, name: String) -> Job<Prepared> {
+        let session = self.session(id);
+        let connection = id.to_owned();
+        self.job(async move {
+            let session=session?;
+            if name.is_empty() || name.len()>63 || name.starts_with('-') || name.ends_with('-')
+                || !name.bytes().all(|b| b.is_ascii_lowercase()||b.is_ascii_digit()||b==b'-'){
+                return Err("Use 1–63 lowercase letters, digits or hyphens, starting and ending with a letter or digit".into());
+            }
+            let path=format!("/api/v1/namespaces/{name}");
+            if session.read_optional(&path).await?.is_some(){return Err("Namespace already exists".into())}
+            let desired=json!({"apiVersion":"v1","kind":"Namespace","metadata":{"name":name}});
+            Ok(Prepared{connection,session,stop_on_error:true,operations:vec![Operation{target:label("Namespace",&desired),path,before:None,desired,change:Change::CreateNamespace,warning:String::new()}]})
+        })
     }
     pub fn prepare_yaml(
         &self,
@@ -433,6 +458,93 @@ impl Backend {
             Ok(Prepared { connection: id, session, operations, stop_on_error: false })
         })
     }
+    pub fn prepare_admin(
+        &self,
+        id: &str,
+        key: &str,
+        objects: Vec<Value>,
+        action: AdminAction,
+    ) -> Job<Prepared> {
+        let session = self.session(id);
+        let key = key.to_owned();
+        let id = id.to_owned();
+        let spec = self.spec(&id, &key);
+        self.job(async move {
+            let session = session?;
+            if objects.is_empty() {
+                return Err("Select a resource".into());
+            }
+            let mut operations = Vec::new();
+            for object in objects {
+                let name = segment(required(&object, "/metadata/name")?)?;
+                if spec.namespaced {
+                    segment(required(&object, "/metadata/namespace")?)?;
+                }
+                let (change, desired, warning) = match &action {
+                    AdminAction::Scale(n)
+                        if matches!(key.as_str(), "deployments" | "statefulsets") =>
+                    {
+                        (Change::Scale, json!(n), format!("Set replicas to {n}"))
+                    }
+                    AdminAction::Cordon(value) if key == "nodes" => (
+                        Change::Scheduling,
+                        json!(value),
+                        if *value {
+                            "Prevent new scheduling"
+                        } else {
+                            "Allow scheduling"
+                        }
+                        .into(),
+                    ),
+                    AdminAction::Delete(typed) if key == "namespaces" => {
+                        if name == "default"
+                            || name.starts_with("kube-")
+                            || typed.as_deref() != Some(name)
+                        {
+                            return Err(
+                                "Protected namespace or name confirmation does not match".into()
+                            );
+                        }
+                        (
+                            Change::Delete,
+                            Value::Null,
+                            "Deletes the namespace and its contents.".into(),
+                        )
+                    }
+                    AdminAction::Delete(_)
+                        if crate::catalog::RESOURCES.iter().any(|r| r.key == key)
+                            && !matches!(
+                                key.as_str(),
+                                "helm" | "overview" | "nodes" | "definitions"
+                            ) =>
+                    {
+                        (Change::Delete, Value::Null, "Delete this resource.".into())
+                    }
+                    _ => return Err("Action unavailable for this resource".into()),
+                };
+                let path = spec.item(&object);
+                let current = session
+                    .read_optional(&path)
+                    .await?
+                    .ok_or("Resource no longer exists")?;
+                identity_version(&object, &current)?;
+                operations.push(Operation {
+                    target: label(&key, &object),
+                    path,
+                    before: Some(object),
+                    desired,
+                    change,
+                    warning,
+                });
+            }
+            Ok(Prepared {
+                connection: id,
+                session,
+                operations,
+                stop_on_error: false,
+            })
+        })
+    }
     pub fn execute_mutation(self: &Arc<Self>, plan: Prepared) -> Job<BatchReport> {
         let backend = self.clone();
         self.job(async move {
@@ -567,6 +679,12 @@ fn report(op: &Operation, outcome: Outcome, message: String) -> ItemReport {
 fn request(session: &Session, op: &Operation) -> Result<http::Request<Vec<u8>>, String> {
     let before = op.before.as_ref().unwrap_or(&Value::Null);
     let (method, uri, content_type, body) = match op.change {
+        Change::CreateNamespace => (
+            Method::POST,
+            "/api/v1/namespaces".into(),
+            "application/json",
+            op.desired.clone(),
+        ),
         Change::Apply => {
             let mut desired = op.desired.clone();
             if let Some(before) = &op.before {
@@ -588,7 +706,13 @@ fn request(session: &Session, op: &Operation) -> Result<http::Request<Vec<u8>>, 
             "application/json",
             op.desired.clone(),
         ),
-        Change::DeletePod => (
+        Change::Scale | Change::Scheduling => (
+            Method::PATCH,
+            op.path.clone(),
+            "application/json-patch+json",
+            json!([{"op":"test","path":"/metadata/uid","value":before["metadata"]["uid"]},{"op":"test","path":"/metadata/resourceVersion","value":before["metadata"]["resourceVersion"]},{"op":"add","path":if matches!(op.change,Change::Scale){"/spec/replicas"}else{"/spec/unschedulable"},"value":op.desired}]),
+        ),
+        Change::DeletePod | Change::Delete => (
             Method::DELETE,
             op.path.clone(),
             "application/json",
@@ -662,7 +786,7 @@ async fn reconcile(session: &Session, op: &Operation) -> (Outcome, String) {
         }
     };
     let before = op.before.as_ref();
-    if matches!(op.change, Change::DeletePod)
+    if matches!(op.change, Change::DeletePod | Change::Delete)
         && (current.is_none()
             || current.as_ref().is_some_and(|v| {
                 before.is_some_and(|b| v["metadata"]["uid"] != b["metadata"]["uid"])
@@ -670,7 +794,12 @@ async fn reconcile(session: &Session, op: &Operation) -> (Outcome, String) {
     {
         return (
             Outcome::Succeeded,
-            "Original Pod removed · replacement readiness not verified".into(),
+            if matches!(op.change, Change::DeletePod) {
+                "Original Pod removed · replacement readiness not verified"
+            } else {
+                "Original resource removed"
+            }
+            .into(),
         );
     }
     if let Some(current) = &current {
@@ -684,6 +813,11 @@ async fn reconcile(session: &Session, op: &Operation) -> (Outcome, String) {
             // A subset check cannot prove that omitted, previously owned fields were removed.
             Change::Apply if before.is_some() => editable(current) == editable(&op.desired),
             Change::Apply => contains(&editable(current), &editable(&op.desired)),
+            Change::Scale => current["spec"]["replicas"] == op.desired,
+            Change::Scheduling => {
+                current["spec"]["unschedulable"].as_bool().unwrap_or(false)
+                    == op.desired.as_bool().unwrap_or(false)
+            }
             Change::Replace => editable(current) == editable(&op.desired),
             Change::Restart => {
                 current.pointer(
@@ -724,6 +858,73 @@ mod tests {
     use crate::backend::tests::{await_result, mock_backend};
     use futures::FutureExt;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    #[test]
+    fn administrative_actions_require_identity_and_respect_read_only_after_review() {
+        let baseline = object("deployments", "api");
+        let copy = baseline.clone();
+        let writes = Arc::new(AtomicUsize::new(0));
+        let sent = writes.clone();
+        let backend = mock_backend(move |r| {
+            if r.method() != Method::GET {
+                sent.fetch_add(1, Ordering::SeqCst);
+            }
+            (200, copy.to_string())
+        });
+        let plan = await_result(&mut backend.prepare_admin(
+            "test",
+            "deployments",
+            vec![baseline.clone()],
+            AdminAction::Scale(0),
+        ))
+        .unwrap();
+        let request = request(&plan.session, &plan.operations[0]).unwrap();
+        let patch: Value = serde_json::from_slice(request.body()).unwrap();
+        assert_eq!(patch[0]["value"], baseline["metadata"]["uid"]);
+        assert_eq!(patch[1]["value"], baseline["metadata"]["resourceVersion"]);
+        assert_eq!(
+            patch[2],
+            json!({"op":"add","path":"/spec/replicas","value":0})
+        );
+        backend.set_read_only(true);
+        assert!(
+            !await_result(&mut backend.execute_mutation(plan))
+                .unwrap()
+                .succeeded()
+        );
+        assert_eq!(writes.load(Ordering::SeqCst), 0);
+        let mut replaced = baseline;
+        replaced["metadata"]["uid"] = json!("replacement");
+        assert!(
+            await_result(&mut backend.prepare_admin(
+                "test",
+                "deployments",
+                vec![replaced],
+                AdminAction::Delete(None)
+            ))
+            .is_err()
+        );
+    }
+    #[test]
+    fn namespace_create_cannot_overwrite_a_competing_create() {
+        let posts = Arc::new(AtomicUsize::new(0));
+        let seen = posts.clone();
+        let backend = mock_backend(move |r| {
+            if r.method() == Method::POST {
+                assert_eq!(r.uri().path(), "/api/v1/namespaces");
+                seen.fetch_add(1, Ordering::SeqCst);
+                return failure(409);
+            }
+            failure(404)
+        });
+        assert!(await_result(&mut backend.prepare_namespace("test", "INVALID".into())).is_err());
+        let plan = await_result(&mut backend.prepare_namespace("test", "apps".into())).unwrap();
+        assert!(
+            !await_result(&mut backend.execute_mutation(plan))
+                .unwrap()
+                .succeeded()
+        );
+        assert_eq!(posts.load(Ordering::SeqCst), 1);
+    }
     fn object(key: &str, name: &str) -> Value {
         let (kind, api) = match key {
             "pods" => ("Pod", "v1"),

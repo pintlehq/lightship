@@ -15,10 +15,17 @@ struct WritePermit {
 }
 #[derive(Clone, Default)]
 pub struct Policy {
+    read_only: Arc<std::sync::atomic::AtomicBool>,
     collections: Arc<RwLock<HashSet<String>>>,
     revoked: Arc<std::sync::atomic::AtomicBool>,
 }
 impl Policy {
+    pub fn with_read_only(read_only: Arc<std::sync::atomic::AtomicBool>) -> Self {
+        Self {
+            read_only,
+            ..Self::default()
+        }
+    }
     pub fn revoke(&self) {
         self.revoked
             .store(true, std::sync::atomic::Ordering::SeqCst);
@@ -128,22 +135,27 @@ impl Policy {
         content_type: &str,
         body: Vec<u8>,
     ) -> Result<Request<Vec<u8>>, String> {
+        if self.read_only.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err("Read-only mode is enabled".into());
+        }
         let mut request = Request::builder()
             .method(method.clone())
             .uri(uri)
             .header("Content-Type", content_type)
             .body(body)
             .map_err(|_| "Invalid mutation request")?;
+        let target = request.uri().path();
+        let target = if method == Method::POST && target.ends_with("/eviction") {
+            let parts: Vec<_> = target.trim_start_matches('/').split('/').collect();
+            if parts.len() != 7 || parts[..3] != ["api", "v1", "namespaces"] || parts[4] != "pods" {
+                return Err("Invalid eviction target".into());
+            }
+            target.strip_suffix("/eviction").unwrap_or(target)
+        } else {
+            target
+        };
         if !self.active()
-            || !self.allows(
-                &Method::GET,
-                request
-                    .uri()
-                    .path()
-                    .parse()
-                    .as_ref()
-                    .map_err(|_| "Invalid target")?,
-            )
+            || !self.allows(&Method::GET, &target.parse().map_err(|_| "Invalid target")?)
         {
             return Err("Mutation target unavailable or connection changed".into());
         }
@@ -159,7 +171,8 @@ impl Policy {
         Ok(request)
     }
     pub fn check(&self, request: Request<Body>) -> Result<Request<Body>, tower::BoxError> {
-        let typed_write = self.active()
+        let typed_write = !self.read_only.load(std::sync::atomic::Ordering::SeqCst)
+            && self.active()
             && request.uri().scheme().is_none()
             && request.uri().authority().is_none()
             && request.extensions().get::<WritePermit>().is_some_and(|p| {

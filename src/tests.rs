@@ -77,6 +77,34 @@ fn onboarding_has_no_demo_or_mutation_controls(cx: &mut TestAppContext) {
     });
 }
 #[gpui_kit::test]
+fn clusters_and_editor_use_the_left_edge(cx: &mut TestAppContext) {
+    let (handle, app) = open(cx);
+    let sidebar_key = if cfg!(target_os = "macos") {
+        "cmd-b"
+    } else {
+        "ctrl-b"
+    };
+    step(cx, handle, |window, cx| {
+        assert!(window.find_all("activity-bar").is_empty());
+        assert_eq!(window.find("lightship-sidebar").bounds().left(), px(0.));
+        app.update(cx, |app, cx| app.toggle_panel(window, cx));
+        active_page(&app, cx).focus_handle(cx).focus(window, cx);
+        window.press(sidebar_key, cx);
+    });
+    step(cx, handle, |window, cx| {
+        assert!(window.find_all("lightship-sidebar").is_empty());
+        assert_eq!(window.find("lightship-panel").bounds().left(), px(0.));
+        window.press(sidebar_key, cx);
+    });
+    step(cx, handle, |window, cx| {
+        assert_eq!(window.find("lightship-sidebar").bounds().left(), px(0.));
+        window.click("command-search", cx);
+    });
+    step(cx, handle, |window, _| {
+        assert!(!window.find_all("workspace-command-palette").is_empty());
+    });
+}
+#[gpui_kit::test]
 fn selection_filter_numeric_sort_and_copy(cx: &mut TestAppContext) {
     let (handle, app) = open(cx);
     let page = cx.update(|cx| active_page(&app, cx));
@@ -195,7 +223,7 @@ fn palette_keyboard_escape_and_modal_isolation(cx: &mut TestAppContext) {
                 .is_empty()
         );
         window.click("select-visible", cx);
-        app.update(cx, |app, cx| app.manage_clusters(window, cx));
+        app.update(cx, |app, cx| app.settings(window, cx));
         window.press("escape", cx);
     });
     step(cx, handle, |_, cx| {
@@ -1007,7 +1035,8 @@ fn removing_connection_confirms_data_drafts_before_changing_settings(cx: &mut Te
         app.update(cx, |app, cx| app.manage_clusters(window, cx))
     });
     step(cx, handle, |window, cx| {
-        window.click("remove:Development", cx)
+        window.click("remove:Development", cx);
+        window.click("confirm-accept", cx)
     });
     cx.run_until_parked();
     step(cx, handle, |window, cx| {
@@ -1030,7 +1059,8 @@ fn removing_connection_confirms_data_drafts_before_changing_settings(cx: &mut Te
         )
     });
     step(cx, handle, |window, cx| {
-        window.click("remove:Development", cx)
+        window.click("remove:Development", cx);
+        window.click("confirm-accept", cx)
     });
     cx.run_until_parked();
     step(cx, handle, |window, cx| window.click("confirm-accept", cx));
@@ -1050,7 +1080,17 @@ fn removing_connection_confirms_data_drafts_before_changing_settings(cx: &mut Te
                 .read(cx)
                 .groups(cx)
                 .iter()
-                .all(|g| g.views.is_empty())
+                .flat_map(|g| &g.views)
+                .all(|id| app
+                    .read(cx)
+                    .workspace
+                    .read(cx)
+                    .document(*id, cx)
+                    .unwrap()
+                    .key
+                    .0
+                    .as_ref()
+                    == "app/clusters")
         );
     });
 }
@@ -1102,4 +1142,175 @@ fn apply_yaml_toolbar_opens_permanent_document_with_namespace_and_independent_sp
         assert_ne!(Some(page.entity_id()), original);
         assert!(!page.read(cx).dirty());
     });
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "Captures native Metal fixtures when LIGHTSHIP_CAPTURE_DIR is supplied"]
+fn capture_desktop_fixtures() {
+    let dir = std::path::PathBuf::from(
+        std::env::var_os("LIGHTSHIP_CAPTURE_DIR").expect("set LIGHTSHIP_CAPTURE_DIR"),
+    );
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut h = gpui::HeadlessAppContext::with_platform(
+        std::sync::Arc::new(gpui_apple::AppleTextSystem::new()),
+        std::sync::Arc::new(gpui::assets::AllAssets),
+        gpui::platform::current_headless_renderer,
+    );
+    h.update(|cx| {
+        initialize(cx);
+        cx.set_reduce_motion(true);
+    });
+    for (width, height) in [(1440, 900), (1024, 680)] {
+        for mode in [theme::ThemeMode::Light, theme::ThemeMode::Dark] {
+            let (handle, app) = h.update(|cx| {
+                let mut opt = chrome::window_options(cx);
+                opt.window_bounds = Some(gpui::WindowBounds::Windowed(gpui::Bounds::new(
+                    point(px(0.), px(0.)),
+                    size(px(width as f32), px(height as f32)),
+                )));
+                let (handle, app) =
+                    gpui::open_window(opt, cx, |w, cx| cx.new(|cx| Lightship::new(w, cx))).unwrap();
+                app.read(cx).connections.clone().update(cx, |m, cx| {
+                    m.settings.connections.push(backend::config::Connection {
+                        id: "e2e".into(),
+                        name: "e2e-cluster".into(),
+                        context: "e2e".into(),
+                        source: backend::config::Source::Files(vec![]),
+                        trusted_exec: None,
+                    });
+                    cx.notify()
+                });
+                theme::set_mode(mode, cx);
+                (handle, app)
+            });
+            for screen in [
+                "start", "Overview", "Pods", "detail", "manage", "add", "settings", "terminal",
+            ] {
+                h.update_window(handle, |_, w, cx| {
+                    if w.has_active_dialog(cx) {
+                        w.close_dialog(cx);
+                    }
+                    match screen {
+                        "Overview" | "Pods" => {
+                            if screen == "Overview" {
+                                app.read(cx).navigation.clone().update(cx, |nav, cx| {
+                                    nav.toggle_node(&"e2e".into(), cx);
+                                    if !nav.is_expanded(&"e2e/Workloads".into(), cx) {
+                                        nav.toggle_node(&"e2e/Workloads".into(), cx);
+                                    }
+                                });
+                            }
+                            let doc = pintle_gpui_kit::shell::workspace::Document::new(
+                                format!("e2e/{}", screen.to_lowercase()).as_str(),
+                                screen,
+                                "e2e-cluster",
+                            );
+                            app.read(cx)
+                                .workspace
+                                .clone()
+                                .update(cx, |ws, cx| ws.open(doc, OpenMode::Permanent, w, cx));
+                            if screen == "Pods" {
+                                let page = active_page(&app, cx);
+                                if let Some(file) = std::env::var_os("LIGHTSHIP_REFERENCE_PODS") {
+                                    let pods: Vec<serde_json::Value> =
+                                        serde_json::from_slice(&std::fs::read(file).unwrap())
+                                            .unwrap();
+                                    page.read(cx).table.clone().update(cx, |table, cx| {
+                                        let rows = table.delegate_mut();
+                                        rows.rows = pods
+                                            .into_iter()
+                                            .map(|p| {
+                                                let v = |k: &str| {
+                                                    p[k].as_str().unwrap_or("—").to_owned()
+                                                };
+                                                catalog::Row {
+                                                    id: format!("{}/{}", v("ns"), v("name")),
+                                                    name: v("name"),
+                                                    namespace: Some(v("ns")),
+                                                    healthy: p["status"] == "Running",
+                                                    cells: vec![
+                                                        catalog::Cell::text(v("name")),
+                                                        catalog::Cell::text(v("ns")),
+                                                        catalog::Cell::text(v("status")),
+                                                        catalog::Cell::text(v("ready")),
+                                                        catalog::Cell::number(
+                                                            p["restarts"].as_u64().unwrap(),
+                                                        ),
+                                                        catalog::Cell::text(v("cpu")),
+                                                        catalog::Cell::text(v("mem")),
+                                                        catalog::Cell::text(v("node")),
+                                                        catalog::Cell::text(v("age")),
+                                                    ],
+                                                }
+                                            })
+                                            .collect();
+                                        rows.status = "Connected · watching".into();
+                                        rows.rebuild();
+                                        cx.notify();
+                                    });
+                                } else {
+                                    seed(&page, cx)
+                                }
+                            } else {
+                                active_overview(&app, cx).update(cx, |p, cx| {
+                                    p.set_test_state(
+                                        backend::overview::tests::state(chrono::Utc::now()),
+                                        cx,
+                                    )
+                                });
+                            }
+                        }
+                        "detail" => {
+                            let object = deployment_detail();
+                            app.update(cx, |p, cx| {
+                                p.open_resource(
+                                    &Inspect {
+                                        cluster: "e2e".into(),
+                                        key: "deployments".into(),
+                                        object: object.clone(),
+                                    },
+                                    w,
+                                    cx,
+                                )
+                            });
+                            active_detail(&app, cx).update(cx, |p, cx| {
+                                p.set_test_detail(object, serde_json::json!({"items":[]}), cx)
+                            });
+                        }
+                        "manage" => app.update(cx, |p, cx| p.manage_clusters(w, cx)),
+                        "add" => app.update(cx, |p, cx| p.add_cluster(w, cx)),
+                        "settings" => app.update(cx, |p, cx| p.settings(w, cx)),
+                        "terminal" => app.update(cx, |p, cx| p.toggle_panel(w, cx)),
+                        _ => {}
+                    }
+                })
+                .unwrap();
+                h.run_until_parked();
+                h.update_window(handle, |_, w, cx| {
+                    w.render_frame(cx);
+                    w.render_frame(cx);
+                })
+                .unwrap();
+                if matches!(screen, "settings" | "add") {
+                    std::thread::sleep(std::time::Duration::from_millis(320));
+                    h.advance_clock(std::time::Duration::from_millis(320));
+                    h.update_window(handle, |_, w, cx| {
+                        w.refresh();
+                        w.render_frame(cx);
+                    })
+                    .unwrap();
+                }
+                h.capture_screenshot(handle)
+                    .unwrap()
+                    .save(dir.join(format!(
+                        "{width}-{}-{screen}.png",
+                        if mode.is_dark() { "dark" } else { "light" }
+                    )))
+                    .unwrap();
+            }
+            h.update_window(handle, |_, w, _| w.remove_window())
+                .unwrap();
+        }
+    }
 }

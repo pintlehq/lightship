@@ -3,9 +3,9 @@ use crate::backend::{
     Backend, Job, Spec,
     config::{self, Connection, Settings, Source},
 };
-use futures::FutureExt;
+
 use gpui::component::{
-    ActiveTheme, Sizable,
+    ActiveTheme, Disableable, Sizable,
     button::{Button, ButtonVariants},
     input::{Input, InputState},
 };
@@ -20,7 +20,11 @@ use std::{
     time::Duration,
 };
 type RemoveGuard = std::rc::Rc<dyn Fn(&str, &mut Window, &mut App) -> Task<bool>>;
+pub struct RequestAddCluster;
+impl EventEmitter<RequestAddCluster> for Connections {}
 pub struct Connections {
+    focus: FocusHandle,
+    editing: Option<String>,
     pub backend: Arc<Backend>,
     pub settings: Settings,
     pub status: HashMap<String, String>,
@@ -54,7 +58,7 @@ impl Connections {
                 }
             }
         });
-        let mut result = Self {
+        Self {
             backend,
             settings,
             status: HashMap::new(),
@@ -63,16 +67,14 @@ impl Connections {
             descriptions: HashMap::new(),
             reviews: HashMap::new(),
             rename,
+            focus: cx.focus_handle(),
+            editing: None,
             error,
             persistence_ok,
             before_remove: None,
             remove_task: None,
             _poll: poll,
-        };
-        for connection in result.settings.connections.clone() {
-            result.connect(&connection.id);
         }
-        result
     }
     fn poll(&mut self, cx: &mut Context<Self>) {
         let mut complete = Vec::new();
@@ -159,8 +161,48 @@ impl Connections {
         }
     }
     pub fn save_appearance(&mut self, dark: bool) {
+        self.settings.theme = Some(if dark { "dark" } else { "light" }.into());
         self.settings.dark = dark;
         self.persist();
+    }
+    pub fn save_theme(&mut self, theme: &str) {
+        self.settings.theme = Some(theme.to_owned());
+        self.settings.dark = theme == "dark";
+        self.persist();
+    }
+    pub fn save_window(&mut self, state: WindowBounds) {
+        let bounds = state.get_bounds();
+        self.settings.window = Some(config::SavedWindow {
+            bounds: [
+                bounds.origin.x.into(),
+                bounds.origin.y.into(),
+                bounds.size.width.into(),
+                bounds.size.height.into(),
+            ],
+            mode: match state {
+                WindowBounds::Maximized(_) => "maximized",
+                WindowBounds::Fullscreen(_) => "fullscreen",
+                _ => "normal",
+            }
+            .into(),
+        });
+        self.persist();
+    }
+    fn move_connection(&mut self, id: &str, direction: isize, cx: &mut Context<Self>) {
+        let Some(from) = self.settings.connections.iter().position(|c| c.id == id) else {
+            return;
+        };
+        let Some(to) = from
+            .checked_add_signed(direction)
+            .filter(|&i| i < self.settings.connections.len())
+        else {
+            return;
+        };
+        self.settings.connections.swap(from, to);
+        if !self.persist() {
+            self.settings.connections.swap(from, to);
+        }
+        cx.notify();
     }
     /// Persist an already reviewed import atomically, then start guarded connections.
     pub fn import(
@@ -235,24 +277,38 @@ impl Connections {
         if self.remove_task.is_some() {
             return;
         }
-        let mut permission = self
-            .before_remove
-            .as_ref()
-            .map(|guard| guard(id, window, cx))
-            .unwrap_or_else(|| Task::ready(true));
-        if permission.is_ready() {
-            if (&mut permission).now_or_never() == Some(true) {
-                self.remove(id, cx);
-            }
+        let Some(connection) = self.settings.connections.iter().find(|c| c.id == id) else {
             return;
-        }
-        let id = id.to_string();
-        self.remove_task = Some(cx.spawn(async move |owner, cx| {
-            let allowed = permission.await;
-            let _ = owner.update(cx, |this, cx| {
-                this.remove_task = None;
+        };
+        let answer = crate::confirm::ask(
+            "Remove cluster from Lightship?",
+            format!(
+                "Remove the saved connection for {} from this app.",
+                connection.name
+            ),
+            "Remove",
+            window,
+            cx,
+        );
+        let guard = self.before_remove.clone();
+        let id = id.to_owned();
+        self.remove_task = Some(cx.spawn_in(window, async move |owner, cx| {
+            let allowed = if answer.await {
+                if let Some(guard) = guard {
+                    match cx.update(|w, cx| guard(&id, w, cx)) {
+                        Ok(permission) => permission.await,
+                        Err(_) => false,
+                    }
+                } else {
+                    true
+                }
+            } else {
+                false
+            };
+            let _ = owner.update(cx, |m, cx| {
+                m.remove_task = None;
                 if allowed {
-                    this.remove(&id, cx);
+                    m.remove(&id, cx)
                 }
             });
         }));
@@ -339,6 +395,7 @@ impl Connections {
                             r.title,
                             c.name.clone(),
                         )
+                        .icon_path(r.icon().path())
                     })
                     .chain(self.specs.get(&c.id).into_iter().flatten().map(|r| {
                         Document::new(
@@ -360,11 +417,14 @@ impl Connections {
                 let mut groups = HashSet::new();
                 for resource in crate::catalog::RESOURCES {
                     let node = |r: &crate::catalog::Resource| {
-                        NavigationNode::resource(Document::new(
-                            format!("{}/{}", c.id, r.key).as_str(),
-                            r.title,
-                            c.name.clone(),
-                        ))
+                        NavigationNode::resource(
+                            Document::new(
+                                format!("{}/{}", c.id, r.key).as_str(),
+                                r.title,
+                                c.name.clone(),
+                            )
+                            .icon_path(r.icon().path()),
+                        )
                         .icon(r.icon())
                     };
                     if resource.group.is_empty() {
@@ -376,12 +436,23 @@ impl Connections {
                             .map(node)
                             .collect();
                         if resource.group == "Custom Resources" {
-                            grouped.extend(self.specs.get(&c.id).into_iter().flatten().map(|r| {
-                                NavigationNode::resource(Document::new(
-                                    format!("{}/{}", c.id, r.key).as_str(),
-                                    r.title.clone(),
-                                    c.name.clone(),
-                                ))
+                            let mut by_group =
+                                std::collections::BTreeMap::<String, Vec<NavigationNode>>::new();
+                            for spec in self.specs.get(&c.id).into_iter().flatten() {
+                                by_group.entry(spec.group.clone()).or_default().push(
+                                    NavigationNode::resource(Document::new(
+                                        format!("{}/{}", c.id, spec.key).as_str(),
+                                        spec.title.clone(),
+                                        c.name.clone(),
+                                    )),
+                                );
+                            }
+                            grouped.extend(by_group.into_iter().map(|(group, items)| {
+                                NavigationNode::folder(
+                                    format!("{}/group:{group}", c.id),
+                                    group,
+                                    items,
+                                )
                             }));
                         }
                         children.push(NavigationNode::folder(
@@ -397,21 +468,237 @@ impl Connections {
             .collect()
     }
 }
+impl Focusable for Connections {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
 impl Render for Connections {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let chrome = cx.theme().sidebar;
+        let border = cx.theme().border;
+        let muted = cx.theme().muted_foreground;
+        let manager_rows = self
+            .settings
+            .connections
+            .iter()
+            .enumerate()
+            .map(|(index, c)| {
+                let id = c.id.clone();
+                let edit = id.clone();
+                let save = id.clone();
+                let remove = id.clone();
+                let reconnect = id.clone();
+                let trust = id.clone();
+                let name = c.name.clone();
+                let status = self
+                    .status
+                    .get(&id)
+                    .cloned()
+                    .unwrap_or_else(|| "Not tested".into());
+                let (server, version) = self
+                    .backend
+                    .server_version(&id)
+                    .unwrap_or_else(|| ("—".into(), "—".into()));
+                let plugin = self.descriptions.get(&id).cloned().unwrap_or_default();
+                div()
+                    .flex()
+                    .flex_col()
+                    .px_3()
+                    .py_2()
+                    .border_t_1()
+                    .border_color(border)
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w(px(100.))
+                                    .flex()
+                                    .flex_col()
+                                    .items_start()
+                                    .when(self.editing.as_ref() != Some(&id), |d| {
+                                        d.child(
+                                            Button::new(SharedString::from(format!(
+                                                "rename:{edit}"
+                                            )))
+                                            .label(name.clone())
+                                            .ghost()
+                                            .small()
+                                            .tooltip("Rename cluster")
+                                            .on_click(cx.listener(move |m, _, w, cx| {
+                                                m.editing = Some(edit.clone());
+                                                m.rename.update(cx, |t, cx| {
+                                                    t.set_value(name.clone(), w, cx)
+                                                });
+                                                m.rename.focus_handle(cx).focus(w, cx);
+                                                cx.notify()
+                                            })),
+                                        )
+                                    })
+                                    .when(self.editing.as_ref() == Some(&id), |d| {
+                                        d.child(
+                                            Input::new(&self.rename)
+                                                .id("cluster-display-name")
+                                                .small(),
+                                        )
+                                        .child(
+                                            Button::new("save-cluster-name")
+                                                .label("Save")
+                                                .small()
+                                                .on_click(cx.listener(move |m, _, _, cx| {
+                                                    let name =
+                                                        m.rename.read(cx).value().trim().to_owned();
+                                                    if name.is_empty() {
+                                                        return;
+                                                    }
+                                                    let previous = m.settings.connections.clone();
+                                                    if let Some(c) = m
+                                                        .settings
+                                                        .connections
+                                                        .iter_mut()
+                                                        .find(|c| c.id == save)
+                                                    {
+                                                        c.name = name
+                                                    }
+                                                    if m.persist() {
+                                                        m.editing = None
+                                                    } else {
+                                                        m.settings.connections = previous
+                                                    }
+                                                    cx.notify()
+                                                })),
+                                        )
+                                    })
+                                    .child(
+                                        div()
+                                            .truncate()
+                                            .text_size(px(11.))
+                                            .text_color(muted)
+                                            .child(c.context.clone()),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_color(muted)
+                                    .child(server),
+                            )
+                            .child(div().w(px(72.)).truncate().text_color(muted).child(version))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_color(muted)
+                                    .child(status),
+                            )
+                            .children([(-1, "↑", "Move up"), (1, "↓", "Move down")].map(
+                                |(dir, arrow, label)| {
+                                    let id = id.clone();
+                                    Button::new(SharedString::from(format!("{label}:{id}")))
+                                        .label(arrow)
+                                        .tooltip(label)
+                                        .ghost()
+                                        .xsmall()
+                                        .disabled(if dir < 0 {
+                                            index == 0
+                                        } else {
+                                            index + 1 == self.settings.connections.len()
+                                        })
+                                        .on_click(cx.listener(move |m, _, _, cx| {
+                                            m.move_connection(&id, dir, cx)
+                                        }))
+                                },
+                            ))
+                            .child(
+                                Button::new(SharedString::from(format!("reconnect:{reconnect}")))
+                                    .icon(gpui::component::IconName::RefreshCw)
+                                    .tooltip("Test connection")
+                                    .accessibility_label("Test connection")
+                                    .ghost()
+                                    .small()
+                                    .on_click(cx.listener(move |m, _, _, cx| {
+                                        m.connect(&reconnect);
+                                        cx.notify()
+                                    })),
+                            )
+                            .child(
+                                Button::new(SharedString::from(format!("remove:{remove}")))
+                                    .label("×")
+                                    .tooltip("Remove from app")
+                                    .accessibility_label("Remove from app")
+                                    .ghost()
+                                    .small()
+                                    .on_click(cx.listener(move |m, _, w, cx| {
+                                        m.request_remove(&remove, w, cx)
+                                    })),
+                            ),
+                    )
+                    .when(!plugin.is_empty(), |d| {
+                        d.child(plugin).child(
+                            Button::new(SharedString::from(format!("retrust:{trust}")))
+                                .small()
+                                .label("Trust this configuration and reconnect")
+                                .on_click(
+                                    cx.listener(move |m, _, _, cx| m.trust_existing(&trust, cx)),
+                                ),
+                        )
+                    })
+            });
         div()
             .id("cluster-manager")
+            .track_focus(&self.focus)
             .font_family(cx.theme().mono_font_family.clone())
             .text_size(px(13.))
-            .max_h((window.viewport_size().height - px(180.)).max(px(200.)))
+            .size_full()
+            .p_5()
             .overflow_y_scroll()
             .flex()
             .flex_col()
             .gap_3()
-            .child("Connections are saved on this Mac. Removing one only removes it from this app.")
-            .when(self.settings.connections.is_empty(), |d| {
-                d.child("No saved clusters. Use Add cluster to get started.")
-            })
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("Manage clusters"),
+                    )
+                    .child(
+                        Button::new("test-all")
+                            .small()
+                            .label("Sync all")
+                            .disabled(self.settings.connections.is_empty())
+                            .on_click(cx.listener(|m, _, _, cx| {
+                                for id in m
+                                    .settings
+                                    .connections
+                                    .iter()
+                                    .map(|c| c.id.clone())
+                                    .collect::<Vec<_>>()
+                                {
+                                    m.connect(&id)
+                                }
+                                cx.notify()
+                            })),
+                    )
+                    .child(
+                        Button::new("manage-add-cluster")
+                            .primary()
+                            .small()
+                            .label("+ Add cluster")
+                            .on_click(cx.listener(|_, _, _, cx| cx.emit(RequestAddCluster))),
+                    ),
+            )
             .when(!self.error.is_empty(), |d| {
                 d.child(
                     div()
@@ -419,82 +706,42 @@ impl Render for Connections {
                         .child(self.error.clone()),
                 )
             })
-            .child(Input::new(&self.rename).id("cluster-display-name"))
-            .children(self.settings.connections.clone().into_iter().map(|c| {
-                let reconnect = c.id.clone();
-                let remove = c.id.clone();
-                let rename = c.id.clone();
-                let trust = c.id.clone();
-                let plugin = self.descriptions.get(&c.id).cloned().unwrap_or_default();
+            .child(
                 div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(format!("{} · {}", c.name, c.context))
-                    .child(
-                        self.status
-                            .get(&c.id)
-                            .cloned()
-                            .unwrap_or_else(|| "Disconnected".into()),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_wrap()
-                            .gap_2()
-                            .child(
-                                Button::new(SharedString::from(format!("reconnect:{reconnect}")))
-                                    .label("Reconnect")
-                                    .small()
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.connect(&reconnect);
-                                        cx.notify();
-                                    })),
-                            )
-                            .child(
-                                Button::new(SharedString::from(format!("rename:{rename}")))
-                                    .label("Rename")
-                                    .small()
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        let name = this.rename.read(cx).value().trim().to_owned();
-                                        if !name.is_empty() {
-                                            let old = this.settings.connections.clone();
-                                            if let Some(c) = this
-                                                .settings
-                                                .connections
-                                                .iter_mut()
-                                                .find(|c| c.id == rename)
-                                            {
-                                                c.name = name;
-                                            }
-                                            if !this.persist() {
-                                                this.settings.connections = old;
-                                            }
-                                            cx.notify();
-                                        }
-                                    })),
-                            )
-                            .child(
-                                Button::new(SharedString::from(format!("remove:{remove}")))
-                                    .label("Remove from app")
-                                    .small()
-                                    .ghost()
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        this.request_remove(&remove, window, cx)
-                                    })),
-                            ),
-                    )
-                    .when(!plugin.is_empty(), |d| {
-                        d.child(div().text_size(px(11.)).child(plugin)).child(
-                            Button::new(SharedString::from(format!("retrust:{trust}")))
-                                .label("Trust this configuration and reconnect")
-                                .small()
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.trust_existing(&trust, cx)
-                                })),
+                    .rounded_md()
+                    .overflow_hidden()
+                    .border_1()
+                    .border_color(border)
+                    .bg(cx.theme().group_box)
+                    .when(self.settings.connections.is_empty(), |d| {
+                        d.child(
+                            div()
+                                .h(px(128.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .text_color(muted)
+                                .child("No saved clusters"),
                         )
                     })
-            }))
+                    .when(!self.settings.connections.is_empty(), |d| {
+                        d.child(
+                            div()
+                                .px_3()
+                                .py_2()
+                                .flex()
+                                .text_size(px(11.))
+                                .text_color(muted)
+                                .bg(chrome)
+                                .child(div().flex_1().child("CONTEXT"))
+                                .child(div().flex_1().child("SERVER"))
+                                .child(div().w(px(72.)).child("VERSION"))
+                                .child(div().flex_1().child("STATUS"))
+                                .child(div().w(px(127.)).child("ACTIONS")),
+                        )
+                    })
+                    .children(manager_rows),
+            )
     }
 }
 

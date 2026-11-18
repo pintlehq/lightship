@@ -95,7 +95,8 @@ pub fn row(cluster: &str, resource: Resource, value: &Value) -> Row {
     let status = &value["status"];
     for field in resource.fields {
         cells.push(match *field {
-            "Ready" => {
+            "CPU" | "MEM" => Cell::text("—"),
+            "Ready" | "Containers" => {
                 let (ready, total) = if resource.key == "pods" {
                     (
                         status["containerStatuses"].as_array().map_or(0, |s| {
@@ -126,6 +127,14 @@ pub fn row(cluster: &str, resource: Resource, value: &Value) -> Row {
                     .as_array()
                     .map_or(0, |a| a.iter().map(|s| num(&s["restartCount"])).sum()),
             ),
+            "Addresses" => Cell::number(
+                value["subsets"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|v| count(&v["addresses"]) as u64)
+                    .sum(),
+            ),
             "Node" => cell(&spec["nodeName"]),
             "Service" => cell(&spec["serviceName"]),
             "Status" => Cell::text(match resource.key {
@@ -143,6 +152,23 @@ pub fn row(cluster: &str, resource: Resource, value: &Value) -> Row {
                         "Failed".into()
                     } else {
                         "Active".into()
+                    }
+                }
+                "pods" => {
+                    if value["metadata"]["deletionTimestamp"].is_string() {
+                        "Terminating".into()
+                    } else if let Some(reason) = status["containerStatuses"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .find_map(|s| s.pointer("/state/waiting/reason").and_then(Value::as_str))
+                    {
+                        reason.into()
+                    } else {
+                        match status["phase"].as_str() {
+                            Some("Succeeded") => "Completed".into(),
+                            _ => text(&status["phase"]),
+                        }
                     }
                 }
                 "helm" => text(&value["info"]["status"]),

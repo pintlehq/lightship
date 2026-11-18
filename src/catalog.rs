@@ -20,7 +20,7 @@ resources! {
     "overview", "Overview", "", false, ["Resources", "Healthy", "Attention"];
     "nodes", "Nodes", "", false, ["Status", "Role", "Version"];
     "namespaces", "Namespaces", "", false, ["Status"];
-    "pods", "Pods", "Workloads", true, ["Ready", "Status", "Restarts", "Node"];
+    "pods", "Pods", "Workloads", true, ["Status", "Containers", "Restarts", "CPU", "MEM", "Node"];
     "deployments", "Deployments", "Workloads", true, ["Ready", "Up-to-date", "Available"];
     "statefulsets", "StatefulSets", "Workloads", true, ["Ready", "Replicas", "Service"];
     "daemonsets", "DaemonSets", "Workloads", true, ["Desired", "Current", "Ready", "Available"];
@@ -28,6 +28,7 @@ resources! {
     "cronjobs", "CronJobs", "Workloads", true, ["Schedule", "Suspend", "Active", "Last schedule"];
     "services", "Services", "Network", true, ["Type", "Cluster IP", "Ports"];
     "ingresses", "Ingresses", "Network", true, ["Class", "Hosts", "Address"];
+    "endpoints", "Endpoints", "Network", true, ["Addresses"];
     "networkpolicies", "NetworkPolicies", "Network", true, ["Pod selector", "Policy types"];
     "configmaps", "ConfigMaps", "Config", true, ["Keys"];
     "secrets", "Secrets", "Config", true, ["Type", "Keys"];
@@ -192,7 +193,12 @@ pub fn fixtures(cluster: &str, resource: Resource) -> Vec<Row> {
                 cells.push(Cell::text(ns));
             }
             cells.extend(resource.fields.iter().map(|field| match *field {
-                "Ready" | "Completions" => Cell::formatted(ready, format!("{ready}/{replicas}")),
+                "CPU" => Cell::formatted(n * 15, format!("{}m", n * 15)),
+                "MEM" => Cell::formatted(n * 70, format!("{}Mi", n * 70)),
+                "Addresses" => Cell::number(n + 1),
+                "Ready" | "Containers" | "Completions" => {
+                    Cell::formatted(ready, format!("{ready}/{replicas}"))
+                }
                 "Replicas" | "Desired" | "Current" | "Up-to-date" => Cell::number(replicas),
                 "Available" => Cell::number(ready),
                 "Restarts" => Cell::number(if healthy { n % 3 } else { 12 }),

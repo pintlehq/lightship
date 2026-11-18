@@ -189,7 +189,8 @@ impl YamlPage {
                 Err(e) => self.status = e,
             }
             let message = format!("YAML mutation · {} · {}", self.context, self.status);
-            self.panel.update(cx, |panel, cx| panel.record(message, cx));
+            self.panel
+                .update(cx, |panel, cx| panel.activity(&self.cluster, message, cx));
             cx.notify();
         }
     }

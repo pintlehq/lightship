@@ -269,7 +269,49 @@ impl Drop for OverviewLease {
         }
     }
 }
+pub type PodUsage =
+    std::collections::HashMap<String, std::collections::HashMap<String, (u64, u64)>>;
 impl Backend {
+    pub fn pod_usage(&self, id: &str) -> super::Job<PodUsage> {
+        let session = self.session(id);
+        self.job(async move {
+            let spec = Spec {
+                group: "metrics.k8s.io".into(),
+                version: "v1beta1".into(),
+                ..builtin("pods")
+            };
+            let metrics = session?.dashboard_list(&spec).await?;
+            let mut result = PodUsage::new();
+            for pod in metrics {
+                let (Some(namespace), Some(name), Some(containers)) = (
+                    pod["metadata"]["namespace"].as_str(),
+                    pod["metadata"]["name"].as_str(),
+                    pod["containers"].as_array(),
+                ) else {
+                    continue;
+                };
+                if containers.is_empty() {
+                    continue;
+                }
+                let usage = containers.iter().try_fold((0., 0.), |(cpu, mem), c| {
+                    Ok::<_, String>((
+                        cpu + quantity(&c["usage"]["cpu"])?,
+                        mem + quantity(&c["usage"]["memory"])?,
+                    ))
+                });
+                if let Ok((cpu, mem)) = usage {
+                    result.entry(namespace.into()).or_default().insert(
+                        name.into(),
+                        (
+                            (cpu * 1000.).round() as u64,
+                            (mem / 1048576.).round() as u64,
+                        ),
+                    );
+                }
+            }
+            Ok(result)
+        })
+    }
     pub fn overview(self: &Arc<Self>, id: &str) -> OverviewLease {
         let hub = self
             .overviews

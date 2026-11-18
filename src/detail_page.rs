@@ -188,7 +188,12 @@ impl DetailPage {
     #[cfg(test)]
     pub fn set_test_detail(&mut self, object: Value, events: Value, cx: &mut Context<Self>) {
         self.job = None;
-        self.detail = Some(Detail { object, events });
+        self.detail = Some(Detail {
+            object,
+            events,
+            sections: vec![],
+            revisions: vec![],
+        });
         self.status = "Loaded".into();
         cx.notify();
     }
@@ -734,6 +739,8 @@ impl DetailPage {
                 .into_any_element();
         };
         let object = presentation::redact(&detail.object, self.revealed);
+        let sections = detail.sections.clone();
+        let revisions = detail.revisions.clone();
         let resource = self.target.resource();
         let row = presentation::row(&self.target.cluster, resource, &object);
         let columns = resource.columns();
@@ -928,6 +935,52 @@ impl DetailPage {
             .flex_col()
             .gap_4()
             .child(summary)
+            .children(sections.into_iter().map(|(title, rows)| {
+                div()
+                    .flex_shrink_0()
+                    .border_1()
+                    .border_color(cx.theme().border)
+                    .rounded_lg()
+                    .p_4()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(div().font_weight(gpui::FontWeight::SEMIBOLD).child(title))
+                    .when(rows.is_empty(), |d| d.child("None"))
+                    .children(rows.into_iter().map(|s| div().child(s)))
+            }))
+            .when(!revisions.is_empty(), |d| {
+                d.child(
+                    div()
+                        .p_4()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child("Revision history")
+                        .children(revisions.into_iter().map(|r| {
+                            Button::new(SharedString::from(format!("revision:{}", r["version"])))
+                                .small()
+                                .ghost()
+                                .label(format!(
+                                    "Revision {}   {}",
+                                    r["version"],
+                                    r["status"].as_str().unwrap_or("—")
+                                ))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    if let Some(panel) = this.output.clone() {
+                                        panel.update(cx, |p, cx| {
+                                            p.inspect(
+                                                this.target.cluster.clone(),
+                                                "helm".into(),
+                                                r.clone(),
+                                                cx,
+                                            )
+                                        });
+                                    }
+                                }))
+                        })),
+                )
+            })
             .child(card("detail-metadata", self.target.name(), body, cx))
             .child(card(
                 "recent-events",
@@ -1079,6 +1132,30 @@ impl DetailPage {
                             })),
                     ),
             )
+            .when(!self.pods.is_empty(), |d| {
+                d.child(
+                    Button::new("open-searchable-logs")
+                        .small()
+                        .ghost()
+                        .label(if self.pods.len() > 1 {
+                            "Open combined logs"
+                        } else {
+                            "Open searchable logs"
+                        })
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            if let Some(panel) = this.output.clone() {
+                                panel.update(cx, |p, cx| {
+                                    p.inspect(
+                                        this.target.cluster.clone(),
+                                        "logs".into(),
+                                        Value::Array(this.pods.clone()),
+                                        cx,
+                                    )
+                                });
+                            }
+                        })),
+                )
+            })
             .child(self.log_status.clone())
             .child(self.text_scroll("resource-logs", presentation::plain_log(&self.log_text), 1))
             .into_any_element()
@@ -1242,6 +1319,18 @@ impl Render for DetailPage {
                                 )
                         }),
                     )
+                    .when(self.target.key=="pods" && self.tab==DetailTab::Logs, |d| d.child(Button::new("pod-exec").ghost().small().label("Exec").disabled(self.options.container.is_empty() || self.backend.is_read_only()).on_click(cx.listener(|this,_,_,cx|{
+                        if let Some(p)=this.selected_pod() && let Some(panel)=this.output.clone() {
+                            let obj=serde_json::json!({"name":p["metadata"]["name"],"namespace":p["metadata"]["namespace"],"uid":p["metadata"]["uid"],"container":this.options.container});
+                            panel.update(cx,|panel,cx|panel.inspect(this.target.cluster.clone(),"terminal".into(),obj,cx));
+                        }
+                    }))))
+                    .when(matches!(self.target.key.as_str(),"pods"|"services"|"deployments"|"statefulsets"|"daemonsets"|"jobs"),|d|d.child(Button::new("port-forward").ghost().small().label("Port forward").on_click(cx.listener(|this,_,_,cx|{
+                        if let Some(panel)=this.output.clone() {
+                            let obj=serde_json::json!({"name":this.target.seed["metadata"]["name"],"namespace":this.target.seed["metadata"]["namespace"],"uid":this.target.seed["metadata"]["uid"],"resource":this.target.key});
+                            panel.update(cx,|panel,cx|panel.inspect(this.target.cluster.clone(),"forward".into(),obj,cx));
+                        }
+                    }))))
                     .child(div().flex_1())
                     .when(
                         matches!(self.target.key.as_str(), "secrets" | "helm")

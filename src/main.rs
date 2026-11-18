@@ -2,7 +2,7 @@
 use gpui::TestSupportExt;
 use gpui::assets::IconName;
 use gpui::component::{
-    ActiveTheme, Selectable, Sizable, WindowExt,
+    ActiveTheme, Sizable, WindowExt,
     button::{Button, ButtonVariants},
 };
 use gpui::{
@@ -27,19 +27,32 @@ use std::{
 
 #[cfg(test)]
 mod tests;
-gpui::actions!(lightship, [Quit, Search, ToggleSidebar, TogglePanel]);
+gpui::actions!(
+    lightship,
+    [
+        Quit,
+        Search,
+        ToggleSidebar,
+        TogglePanel,
+        OpenSettings,
+        SwitchTheme
+    ]
+);
 
 mod backend;
 mod catalog;
 mod confirm;
 mod connections;
 mod data_editor;
+mod desktop;
 mod detail_page;
 mod inspector;
+mod logs;
 mod onboarding;
 mod overview_chart;
 mod overview_page;
 mod resource_page;
+mod sessions;
 mod yaml_editor;
 mod yaml_page;
 use detail_page::{DetailPage, DetailTarget, Routes};
@@ -50,8 +63,17 @@ struct Lightship {
     connections: Entity<connections::Connections>,
     navigation: Entity<NavigationTree>,
     layout: Entity<WorkbenchState>,
+    sidebar_size: Entity<gpui::component::resizable::ResizableState>,
+    panel_size: Entity<gpui::component::resizable::ResizableState>,
+    sessions: Entity<sessions::Sessions>,
+    show_terminal: bool,
+    metric_cluster: Option<String>,
+    metric_lease: Option<backend::overview::OverviewLease>,
+    metrics: Option<backend::overview::OverviewSnapshot>,
+    _metric_poll: gpui::Task<()>,
     palette: CommandPalette,
     detail_routes: Routes,
+    log_routes: logs::LogRoutes,
     panel_state: Entity<PanelState>,
     panel_focus: FocusHandle,
     closing: bool,
@@ -62,23 +84,49 @@ impl Lightship {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let backend = backend::Backend::new();
         let connections = cx.new(|cx| connections::Connections::new(backend.clone(), window, cx));
-        theme::set_mode(
-            if connections.read(cx).settings.dark {
-                theme::ThemeMode::Dark
-            } else {
-                theme::ThemeMode::Light
-            },
-            cx,
-        );
+        let preference = connections.read(cx).settings.appearance().to_owned();
+        desktop::set_appearance(&preference, window, cx);
+        let appearance = cx.observe_window_appearance(window, |this: &mut Self, window, cx| {
+            if this.connections.read(cx).settings.appearance() == "system" {
+                desktop::set_appearance("system", window, cx);
+            }
+        });
         let documents = connections.read(cx).documents();
-        let panel_state = cx.new(|_| PanelState::default());
+        let panel_state = cx.new(|_| PanelState::load());
         let detail_routes: Routes = Rc::new(RefCell::new(HashMap::new()));
         let routes = detail_routes.clone();
+        let log_routes: logs::LogRoutes = Default::default();
+        let logs = log_routes.clone();
+        let sessions = cx.new(sessions::Sessions::new);
+        let session_observer = cx.observe(&sessions, |_, _, cx| cx.notify());
+        let forward_page = sessions.clone();
         let page_panel = panel_state.clone();
         let page_connections = connections.clone();
         let workspace = cx.new(|cx| {
             Workspace::new(
                 Rc::new(move |document, window, cx| {
+                    if let Some(pods) = logs.borrow().get(document.key.0.as_ref()).cloned() {
+                        let cluster = document.key.0.split_once('/').unwrap().0.to_owned();
+                        return WorkspacePage::new(
+                            cx.new(|cx| {
+                                logs::Logs::new(cluster, pods, backend.clone(), window, cx)
+                            }),
+                            cx,
+                        );
+                    }
+                    if document.key.0.as_ref() == "app/forwards" {
+                        return WorkspacePage::new(forward_page.clone(), cx);
+                    }
+                    if document.key.0.as_ref() == "app/clusters" {
+                        return WorkspacePage::new(page_connections.clone(), cx);
+                    }
+                    if document.key.0.as_ref() == "app/history" {
+                        let panel = page_panel.clone();
+                        return WorkspacePage::new(
+                            cx.new(|cx| desktop::History::new(panel, window, cx)),
+                            cx,
+                        );
+                    }
                     if let Some(target) = routes.borrow().get(document.key.0.as_ref()).cloned() {
                         let cluster_name = page_connections
                             .read(cx)
@@ -169,9 +217,17 @@ impl Lightship {
             NavigationTree::with_options(
                 connections.read(cx).navigation(),
                 pintle_gpui_kit::shell::workspace::NavigationTreeOptions {
-                    row_height: px(28.),
+                    row_height: px(26.),
                     font_family: Some("JetBrains Mono".into()),
-                    initial_expanded: Some(Default::default()),
+                    initial_expanded: Some(
+                        connections
+                            .read(cx)
+                            .settings
+                            .connections
+                            .iter()
+                            .map(|c| format!("{}/Workloads", c.id).into())
+                            .collect(),
+                    ),
                     decoration: Some({
                         let connections = connections.clone();
                         Rc::new(move |id, cx| {
@@ -186,16 +242,18 @@ impl Lightship {
                                     .status
                                     .get(id.as_ref())
                                     .map(String::as_str)
-                                    .unwrap_or("Disconnected");
+                                    .unwrap_or("not checked");
                                 div()
                                     .text_size(px(10.))
                                     .text_color(cx.theme().muted_foreground)
                                     .child(if status.starts_with("Connected") {
-                                        "● Connected"
+                                        "● connected"
                                     } else if status.starts_with("Connecting") {
-                                        "Connecting…"
+                                        "● connecting"
+                                    } else if status == "not checked" {
+                                        "●"
                                     } else {
-                                        "Offline"
+                                        "● error"
                                     })
                                     .into_any_element()
                             } else {
@@ -208,12 +266,130 @@ impl Lightship {
                 cx,
             )
         });
+        let menu_owner = cx.weak_entity();
+        navigation.update(cx, |nav, _| {
+            nav.set_context_menu(Rc::new(move |id, mut menu, _, cx| {
+                use gpui::component::menu::PopupMenuItem;
+                let Some(owner) = menu_owner.upgrade() else {
+                    return menu;
+                };
+                let manager = owner.read(cx).connections.clone();
+                let cluster = id.split('/').next().unwrap_or("").to_owned();
+                if !manager
+                    .read(cx)
+                    .settings
+                    .connections
+                    .iter()
+                    .any(|c| c.id == cluster)
+                {
+                    return menu;
+                }
+                if let Some(doc) = manager
+                    .read(cx)
+                    .documents()
+                    .into_iter()
+                    .find(|d| d.key.0 == id)
+                {
+                    let workspace = owner.read(cx).workspace.clone();
+                    menu = menu.item(PopupMenuItem::new("Open tab").on_click(move |_, w, cx| {
+                        workspace.update(cx, |ws, cx| {
+                            ws.open(doc.clone(), OpenMode::Permanent, w, cx)
+                        });
+                    }));
+                }
+                let reconnect = cluster.clone();
+                menu.item(
+                    PopupMenuItem::new("Refresh connection").on_click(move |_, _, cx| {
+                        manager.update(cx, |m, cx| {
+                            m.connect(&reconnect);
+                            cx.notify()
+                        })
+                    }),
+                )
+                .item(
+                    PopupMenuItem::new("New terminal").on_click(move |_, w, cx| {
+                        owner.update(cx, |p, cx| p.new_terminal(Some(&cluster), None, w, cx))
+                    }),
+                )
+            }));
+        });
+        navigation.read(cx).search.clone().update(cx, |field, cx| {
+            field.set_placeholder("filter tree…", window, cx)
+        });
+        let timer = cx.background_executor().clone();
+        let metric_poll = cx.spawn(async move |owner, cx| {
+            loop {
+                timer.timer(std::time::Duration::from_secs(1)).await;
+                if owner
+                    .update(cx, |p: &mut Lightship, cx| {
+                        let doc = p
+                            .workspace
+                            .read(cx)
+                            .active_view(cx)
+                            .and_then(|v| p.workspace.read(cx).document(v, cx));
+                        let manager = p.connections.read(cx);
+                        let cluster = doc
+                            .as_ref()
+                            .and_then(|d| d.key.0.split_once('/'))
+                            .and_then(|(id, _)| {
+                                manager.settings.connections.iter().find(|c| c.id == id)
+                            })
+                            .filter(|c| {
+                                manager
+                                    .status
+                                    .get(&c.id)
+                                    .is_some_and(|s| s.starts_with("Connected"))
+                            })
+                            .map(|c| c.id.clone());
+                        if cluster != p.metric_cluster
+                            || p.metric_lease.as_ref().is_some_and(|l| l.invalidated())
+                        {
+                            p.metrics = None;
+                            p.metric_lease =
+                                cluster.as_deref().map(|id| manager.backend.overview(id));
+                            p.metric_cluster = cluster;
+                            cx.notify();
+                        }
+                        if let Some(s) = p.metric_lease.as_mut().and_then(|l| l.take()) {
+                            p.metrics = s.snapshot;
+                            cx.notify();
+                        }
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+        let tree_state = navigation.read(cx).state.clone();
+        let expand = cx.subscribe(
+            &tree_state,
+            |this: &mut Self, _, e: &gpui::component::tree::TreeEvent, cx| {
+                if let gpui::component::tree::TreeEvent::Expanded(id) = e {
+                    this.connections.update(cx, |m, cx| {
+                        if m.settings.connections.iter().any(|c| c.id == id.as_ref())
+                            && !m.status.get(id.as_ref()).is_some_and(|s| {
+                                s.starts_with("Connected") || s.starts_with("Connecting")
+                            })
+                        {
+                            m.connect(id);
+                            cx.notify();
+                        }
+                    });
+                }
+            },
+        );
         let layout = cx.new(|cx| {
             let mut layout = WorkbenchState::new(cx);
             layout.panel_visible = false;
             layout
         });
         let panel_observe = cx.observe(&panel_state, |_, _, cx| cx.notify());
+        let add_from_manager = cx.subscribe_in(
+            &connections,
+            window,
+            |this, _, _: &connections::RequestAddCluster, w, cx| this.add_cluster(w, cx),
+        );
         let inspect = cx.subscribe_in(
             &panel_state,
             window,
@@ -226,7 +402,7 @@ impl Lightship {
             window,
             |this, _, event: &NavigationEvent, window, cx| {
                 this.workspace.update(cx, |workspace, cx| {
-                    workspace.open(event.document.clone(), event.mode, window, cx);
+                    workspace.open(event.document.clone(), OpenMode::Permanent, window, cx);
                 });
             },
         );
@@ -260,6 +436,14 @@ impl Lightship {
                 if let Some(doc) = workspace.read(cx).document(view, cx) {
                     open_keys.insert(doc.key.0.to_string());
                 }
+                if !visible.contains(&view)
+                    && let Some(page) = workspace
+                        .read(cx)
+                        .page(view, cx)
+                        .and_then(|p| p.downcast::<logs::Logs>().ok())
+                {
+                    page.update(cx, |p, cx| p.hide(cx));
+                }
                 if let Some(page) = workspace
                     .read(cx)
                     .page(view, cx)
@@ -275,6 +459,9 @@ impl Lightship {
                     page.update(cx, |page, cx| page.set_visible(visible.contains(&view), cx));
                 }
             }
+            this.log_routes
+                .borrow_mut()
+                .retain(|key, _| open_keys.contains(key));
             this.detail_routes
                 .borrow_mut()
                 .retain(|key, _| open_keys.contains(key));
@@ -291,14 +478,7 @@ impl Lightship {
                 .keywords(["Kubernetes"])
             })
             .collect();
-        entries.extend([
-            CommandEntry::new("apply-yaml", "Commands", "Apply YAML…"),
-            CommandEntry::new("toggle-sidebar", "Commands", "Toggle Sidebar"),
-            CommandEntry::new("toggle-panel", "Commands", "Toggle Panel"),
-            CommandEntry::new("toggle-theme", "Commands", "Toggle Appearance"),
-            CommandEntry::new("add-cluster", "Commands", "Add Cluster"),
-            CommandEntry::new("manage-clusters", "Commands", "Manage Clusters"),
-        ]);
+        entries.extend(Self::commands());
         let palette = CommandPalette::new(entries, window, cx);
         let mut previous_documents = documents.clone();
         let connection_changes =
@@ -310,6 +490,9 @@ impl Lightship {
                     .map(|d| d.key.clone())
                     .collect();
                 let connections = manager.read(cx).settings.connections.clone();
+                this.sessions.update(cx, |s, cx| {
+                    s.retain(&connections.iter().map(|c| c.id.clone()).collect(), cx)
+                });
                 removed.extend(
                     this.detail_routes
                         .borrow()
@@ -325,7 +508,9 @@ impl Lightship {
                     .flat_map(|g| g.views)
                 {
                     if let Some(doc) = this.workspace.read(cx).document(view, cx)
-                        && let Some((id, _)) = doc.key.0.split_once("/apply-yaml:")
+                        && let Some((id, _)) = doc.key.0.split_once('/').filter(|(_, key)| {
+                            key.starts_with("apply-yaml:") || key.starts_with("logs:")
+                        })
                         && !connections.iter().any(|c| c.id == id)
                     {
                         removed.push(doc.key.clone());
@@ -432,20 +617,33 @@ impl Lightship {
             workspace,
             connections,
             navigation,
+            sessions,
+            show_terminal: true,
+            metric_cluster: None,
+            metric_lease: None,
+            metrics: None,
+            _metric_poll: metric_poll,
             layout,
             palette,
             detail_routes,
+            log_routes,
             panel_state,
             panel_focus: cx.focus_handle(),
+            sidebar_size: cx.new(|_| Default::default()),
+            panel_size: cx.new(|_| Default::default()),
             closing: false,
             close_task: None,
             _subscriptions: vec![
                 nav,
                 layout_sub,
+                session_observer,
+                appearance,
+                expand,
                 workspace_sub,
                 panel_observe,
                 inspect,
                 connection_changes,
+                add_from_manager,
             ],
         }
     }
@@ -456,6 +654,10 @@ impl Lightship {
             CommandEntry::new("manage-clusters", "Commands", "Manage Clusters"),
             CommandEntry::new("toggle-sidebar", "Commands", "Toggle Sidebar"),
             CommandEntry::new("toggle-panel", "Commands", "Toggle Panel"),
+            CommandEntry::new("terminal", "Commands", "New cluster terminal"),
+            CommandEntry::new("port-forwards", "Commands", "Port forwards"),
+            CommandEntry::new("history", "Commands", "History"),
+            CommandEntry::new("settings", "Commands", "Open settings"),
             CommandEntry::new("toggle-theme", "Commands", "Toggle Appearance"),
         ]
     }
@@ -480,6 +682,8 @@ impl Lightship {
                 owner.update(cx, |this, cx| {
                     this.closing = false;
                     if allowed {
+                        this.connections
+                            .update(cx, |m, _| m.save_window(window.window_bounds()));
                         if quit {
                             cx.quit();
                         } else {
@@ -550,19 +754,18 @@ impl Lightship {
         });
     }
     fn manage_clusters(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let manager = self.connections.clone();
-        let return_focus = window.focused(cx).unwrap_or_else(|| self.focus_handle(cx));
-        window.open_dialog(cx, move |dialog, _, cx| {
-            let return_focus = return_focus.clone();
-            dialog
-                .title("Manage clusters")
-                .width(px(720.))
-                .centered()
-                .font_family(cx.theme().mono_font_family.clone())
-                .text_size(px(13.))
-                .child(manager.clone())
-                .on_close(move |_, window, cx| return_focus.focus(window, cx))
-        });
+        self.open_utility("app/clusters", "Manage clusters", window, cx);
+    }
+    fn open_utility(
+        &mut self,
+        key: &'static str,
+        title: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let doc = pintle_gpui_kit::shell::workspace::Document::new(key, title, "Lightship");
+        self.workspace
+            .update(cx, |w, cx| w.open(doc, OpenMode::Permanent, window, cx));
     }
     fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let focus = self.workspace.read(cx).active_focus_handle(cx);
@@ -600,6 +803,12 @@ impl Lightship {
                     let _ = owner.update(cx, |this, cx| match id.as_ref() {
                         "toggle-sidebar" => this.toggle_sidebar(window, cx),
                         "toggle-panel" => this.toggle_panel(window, cx),
+                        "terminal" => this.new_terminal(None, None, window, cx),
+                        "port-forwards" => {
+                            this.open_utility("app/forwards", "Port forwards", window, cx)
+                        }
+                        "history" => this.open_utility("app/history", "History", window, cx),
+                        "settings" => this.settings(window, cx),
                         "toggle-theme" => this.toggle_theme(cx),
                         "add-cluster" => this.add_cluster(window, cx),
                         "apply-yaml" => this.apply_yaml(window, cx),
@@ -688,6 +897,78 @@ impl Lightship {
         });
     }
     fn open_resource(&mut self, event: &Inspect, window: &mut Window, cx: &mut Context<Self>) {
+        if event.key == "logs" {
+            if let Some(pods) = event.object.as_array().filter(|p| !p.is_empty()) {
+                if pods.len() > 16 {
+                    window.open_dialog(cx, |d, _, _| {
+                        d.title("Open Pod logs")
+                            .centered()
+                            .child("Select up to 16 Pods to stream their logs together.")
+                    });
+                    return;
+                }
+                use sha2::{Digest, Sha256};
+                let mut ids = pods
+                    .iter()
+                    .filter_map(|p| p["metadata"]["uid"].as_str())
+                    .collect::<Vec<_>>();
+                ids.sort_unstable();
+                ids.dedup();
+                if ids.len() != pods.len() {
+                    return;
+                }
+                let key = format!(
+                    "{}/logs:{:x}",
+                    event.cluster,
+                    Sha256::digest(ids.join("\n"))
+                );
+                self.log_routes
+                    .borrow_mut()
+                    .insert(key.clone(), pods.clone());
+                let context = self
+                    .connections
+                    .read(cx)
+                    .settings
+                    .connections
+                    .iter()
+                    .find(|c| c.id == event.cluster)
+                    .map(|c| c.name.clone())
+                    .unwrap_or_else(|| event.cluster.clone());
+                let doc = pintle_gpui_kit::shell::workspace::Document::new(
+                    key.as_str(),
+                    format!("Logs · {} Pods", pods.len()),
+                    context,
+                );
+                self.workspace
+                    .update(cx, |w, cx| w.open(doc, OpenMode::Permanent, window, cx));
+            }
+            return;
+        }
+        if event.key == "terminal" || event.key == "forward" {
+            let value = &event.object;
+            if let (Some(ns), Some(name)) = (value["namespace"].as_str(), value["name"].as_str()) {
+                if event.key == "terminal" {
+                    if let Some(container) = value["container"].as_str() {
+                        self.new_terminal(
+                            Some(&event.cluster),
+                            Some((ns, name, container, value["uid"].as_str().unwrap_or(""))),
+                            window,
+                            cx,
+                        );
+                    }
+                } else if let Some(kind) = value["resource"].as_str() {
+                    self.forward_dialog(
+                        &event.cluster,
+                        format!("{kind}/{name}"),
+                        ns.to_string(),
+                        value["uid"].as_str().unwrap_or("").into(),
+                        window,
+                        cx,
+                    );
+                }
+            }
+            return;
+        }
         let cluster_name = self
             .connections
             .read(cx)
@@ -739,15 +1020,44 @@ impl Lightship {
             });
         }
     }
-    fn panel(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
-        chrome::frame("lightship-panel", cx)
+    fn panel(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        div()
+            .id("lightship-panel")
+            .test_support()
+            .size_full()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .border_t_1()
+            .border_color(cx.theme().border)
             .child(
                 chrome::panel_tabs("lightship-panel-tabs")
                     .child(
-                        chrome::panel_tab("output-panel-tab", "Output", true)
+                        chrome::panel_tab("terminal-panel-tab", "Terminal", self.show_terminal)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.show_terminal = true;
+                                cx.notify()
+                            })),
+                    )
+                    .child(
+                        chrome::panel_tab("output-panel-tab", "Output", !self.show_terminal)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.show_terminal = false;
+                                cx.notify()
+                            }))
                             .track_focus(&self.panel_focus),
                     )
                     .child(div().flex_1())
+                    .child(
+                        Button::new("new-terminal")
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::Plus)
+                            .tooltip("New cluster terminal")
+                            .on_click(
+                                cx.listener(|this, _, w, cx| this.new_terminal(None, None, w, cx)),
+                            ),
+                    )
                     .child(
                         Button::new("close-panel")
                             .icon(IconName::X)
@@ -759,20 +1069,53 @@ impl Lightship {
                             ),
                     ),
             )
-            .child(
-                div()
-                    .id("panel-content")
-                    .aria_label("Activity output")
-                    .test_support()
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .p_4()
-                    .font_family(cx.theme().mono_font_family.clone())
-                    .text_size(px(12.))
-                    .text_color(cx.theme().muted_foreground)
-                    .child(self.panel_state.read(cx).output.join("\n")),
-            )
+            .when(self.show_terminal, |d| {
+                let sessions = self.sessions.read(cx);
+                if sessions.terminal_count() == 0 && sessions.error.is_empty() {
+                    d.child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .justify_center()
+                            .gap_4()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(gpui::component::Icon::new(IconName::Terminal).size(px(23.)))
+                            .child("Open a shell in the selected cluster context.")
+                            .child(
+                                Button::new("panel-start-terminal")
+                                    .primary()
+                                    .small()
+                                    .icon(IconName::Plus)
+                                    .label("New terminal")
+                                    .on_click(
+                                        cx.listener(|p, _, w, cx| {
+                                            p.new_terminal(None, None, w, cx)
+                                        }),
+                                    ),
+                            ),
+                    )
+                } else {
+                    d.child(sessions::terminal_surface(&self.sessions, cx))
+                }
+            })
+            .when(!self.show_terminal, |d| {
+                d.child(
+                    div()
+                        .id("panel-content")
+                        .aria_label("Activity output")
+                        .test_support()
+                        .flex_1()
+                        .min_h_0()
+                        .overflow_y_scroll()
+                        .p_4()
+                        .font_family(cx.theme().mono_font_family.clone())
+                        .text_size(px(12.))
+                        .text_color(cx.theme().muted_foreground)
+                        .child(self.panel_state.read(cx).output.join("\n")),
+                )
+            })
     }
 }
 impl Focusable for Lightship {
@@ -781,50 +1124,8 @@ impl Focusable for Lightship {
     }
 }
 impl Render for Lightship {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let search = chrome::search_button("Lightship", cx)
-            .on_click(cx.listener(|this, _, window, cx| this.search(window, cx)));
-        let title = chrome::title_bar(cx).child(chrome::title_content(
-            search,
-            Button::new("toggle-panel")
-                .icon(IconName::PanelBottom)
-                .ghost()
-                .xsmall()
-                .accessibility_label("Toggle panel")
-                .on_click(cx.listener(|this, _, window, cx| this.toggle_panel(window, cx))),
-        ));
-        let activity = chrome::activity_bar()
-            .child(
-                Button::new("activity-explorer")
-                    .icon(IconName::Files)
-                    .ghost()
-                    .size(px(36.))
-                    .selected(self.layout.read(cx).sidebar_visible)
-                    .accessibility_label("Explorer")
-                    .tooltip("Toggle Explorer")
-                    .on_click(cx.listener(|this, _, window, cx| this.toggle_sidebar(window, cx))),
-            )
-            .child(
-                Button::new("activity-search")
-                    .icon(IconName::Search)
-                    .ghost()
-                    .size(px(36.))
-                    .accessibility_label("Search")
-                    .on_click(cx.listener(|this, _, window, cx| this.search(window, cx))),
-            )
-            .child(div().flex_1())
-            .child(
-                Button::new("toggle-appearance")
-                    .icon(if cx.theme().mode.is_dark() {
-                        IconName::Sun
-                    } else {
-                        IconName::Moon
-                    })
-                    .ghost()
-                    .size(px(36.))
-                    .accessibility_label("Toggle appearance")
-                    .on_click(cx.listener(|this, _, _, cx| this.toggle_theme(cx))),
-            );
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let desktop = self.desktop(window, cx);
         div()
             .size_full()
             .key_context("Lightship")
@@ -839,73 +1140,33 @@ impl Render for Lightship {
             .on_action(
                 cx.listener(|this, _: &TogglePanel, window, cx| this.toggle_panel(window, cx)),
             )
-            .child(
-                chrome::Workbench::new(
-                    &self.layout,
-                    if self.connections.read(cx).settings.connections.is_empty() {
-                        div()
-                            .size_full()
-                            .flex()
-                            .flex_col()
-                            .items_center()
-                            .justify_center()
-                            .gap_4()
-                            .child("Lightship · Kubernetes")
-                            .child("Add a cluster to browse resources, events and logs.")
-                            .child(
-                                Button::new("add-first-cluster")
-                                    .label("Add cluster")
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.add_cluster(window, cx)
-                                    })),
-                            )
-                            .into_any_element()
-                    } else {
-                        self.workspace.clone().into_any_element()
-                    },
-                )
-                .title(title)
-                .activity(activity)
-                .sidebar(chrome::sidebar(
-                    "lightship-sidebar",
-                    "Clusters",
-                    div()
-                        .size_full()
-                        .min_h_0()
-                        .flex()
-                        .flex_col()
-                        .child(
-                            Button::new("add-cluster")
-                                .label("+ Add cluster")
-                                .small()
-                                .on_click(
-                                    cx.listener(|this, _, window, cx| this.add_cluster(window, cx)),
-                                ),
-                        )
-                        .child(
-                            Button::new("manage-clusters")
-                                .label("Manage clusters")
-                                .small()
-                                .ghost()
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.manage_clusters(window, cx)
-                                })),
-                        )
-                        .child(div().flex_1().min_h_0().child(self.navigation.clone())),
-                    cx,
-                ))
-                .panel(self.panel(cx))
-                .status(chrome::status_bar(
-                    "Lightship",
-                    "YAML apply · Data editing · Restart",
-                    cx,
-                )),
-            )
+            .on_action(cx.listener(|this, _: &OpenSettings, w, cx| this.settings(w, cx)))
+            .on_action(cx.listener(|this, _: &SwitchTheme, _, cx| this.toggle_theme(cx)))
+            .child(desktop)
     }
 }
 fn initialize(cx: &mut App) {
     pintle_gpui_kit::init(cx);
+    desktop::install_theme(cx);
     cx.bind_keys([
+        KeyBinding::new(
+            if cfg!(target_os = "macos") {
+                "cmd-,"
+            } else {
+                "ctrl-,"
+            },
+            OpenSettings,
+            Some("Lightship"),
+        ),
+        KeyBinding::new(
+            if cfg!(target_os = "macos") {
+                "cmd-shift-l"
+            } else {
+                "ctrl-shift-l"
+            },
+            SwitchTheme,
+            Some("Lightship"),
+        ),
         KeyBinding::new(
             if cfg!(target_os = "macos") {
                 "cmd-k"
@@ -949,6 +1210,7 @@ fn initialize(cx: &mut App) {
         items: vec![MenuItem::action("Quit", Quit)],
         disabled: false,
     }]);
+    #[cfg(not(target_os = "macos"))]
     cx.on_window_closed(|cx, _| {
         if cx.windows().is_empty() {
             cx.quit();
@@ -956,16 +1218,25 @@ fn initialize(cx: &mut App) {
     })
     .detach();
 }
+fn open_desktop(cx: &mut App) {
+    gpui::open_window(desktop::window_options(cx), cx, |w, cx| {
+        w.set_window_title("Lightship");
+        cx.new(|cx| Lightship::new(w, cx))
+    })
+    .expect("open Lightship window");
+    cx.activate(true);
+}
 fn main() {
-    gpui::application()
-        .with_assets(gpui::assets::AllAssets)
-        .run(|cx| {
-            initialize(cx);
-            gpui::open_window(chrome::window_options(cx), cx, |window, cx| {
-                window.set_window_title("Lightship");
-                cx.new(|cx| Lightship::new(window, cx))
-            })
-            .expect("open Lightship window");
-            cx.activate(true);
-        });
+    let app = gpui::application().with_assets(gpui::assets::AllAssets);
+    app.on_reopen(|cx| {
+        if cx.windows().is_empty() {
+            open_desktop(cx)
+        } else {
+            cx.activate(true)
+        }
+    });
+    app.run(|cx| {
+        initialize(cx);
+        open_desktop(cx)
+    });
 }

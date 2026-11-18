@@ -294,6 +294,7 @@ impl OverviewPage {
             .border_1()
             .border_color(cx.theme().border)
             .rounded_lg()
+            .bg(cx.theme().group_box)
             .p_4()
             .flex()
             .flex_col()
@@ -309,7 +310,7 @@ impl OverviewPage {
                         "overview-cpu-plot"
                     })
                     .test_support()
-                    .h(px(170.))
+                    .h(px(95.))
                     .w_full()
                     .child(UsagePlot {
                         id: if memory {
@@ -342,6 +343,7 @@ impl OverviewPage {
             .border_1()
             .border_color(cx.theme().border)
             .rounded_lg()
+            .bg(cx.theme().group_box)
             .p_4()
             .flex()
             .flex_col()
@@ -384,7 +386,7 @@ impl OverviewPage {
                             .test_support()
                             .border_b_1()
                             .border_color(cx.theme().border.opacity(0.5))
-                            .pb_2()
+                            .pb_1()
                             .flex()
                             .items_start()
                             .gap_3()
@@ -508,11 +510,12 @@ fn card(
     div()
         .id(id)
         .aria_label(format!("{title}: {value}"))
-        .h(px(140.))
+        .h(px(118.))
         .flex_shrink_0()
         .border_1()
         .border_color(cx.theme().border)
         .rounded_lg()
+        .bg(cx.theme().group_box)
         .p_4()
         .flex()
         .flex_col()
@@ -554,7 +557,7 @@ impl Render for OverviewPage {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let now = Utc::now();
         let snapshot = self.state.snapshot.as_ref();
-        let usable = (self.width - px(32.)).max(px(120.));
+        let usable = (self.width - px(40.)).max(px(120.));
         let columns = if usable >= px(1000.) {
             4
         } else if usable >= px(520.) {
@@ -621,7 +624,7 @@ impl Render for OverviewPage {
                     .flex()
                     .flex_wrap()
                     .items_center()
-                    .p_4()
+                    .p_5()
                     .gap_3()
                     .child(div().flex_1().child(format!("{} / Overview", self.title)))
                     .child(

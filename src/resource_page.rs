@@ -26,11 +26,14 @@ pub struct Rows {
     pub rows: Vec<Row>,
     pub visible: Vec<usize>,
     pub query: String,
+    phase: Option<String>,
+    metrics: crate::backend::overview::PodUsage,
     pub namespace: Option<String>,
     pub selected: HashSet<String>,
     pub sort: Option<(usize, ColumnSort)>,
     pub(crate) panel: Entity<PanelState>,
     pub key: String,
+    owner: Option<WeakEntity<ResourcePage>>,
     pub objects: std::collections::HashMap<String, serde_json::Value>,
     pub status: String,
 }
@@ -47,12 +50,15 @@ impl Rows {
             resource,
             rows,
             visible: vec![],
+            phase: None,
+            metrics: Default::default(),
             query: String::new(),
             namespace: None,
             selected: HashSet::new(),
             sort: None,
             panel,
             key,
+            owner: None,
             objects: Default::default(),
             status: "Loading…".into(),
         };
@@ -61,6 +67,7 @@ impl Rows {
     }
     pub fn rebuild(&mut self) {
         let query = self.query.trim().to_lowercase();
+        let status = self.resource.columns().iter().position(|c| *c == "Status");
         self.visible = self
             .rows
             .iter()
@@ -69,6 +76,10 @@ impl Rows {
                 self.namespace
                     .as_ref()
                     .is_none_or(|ns| row.namespace.as_ref() == Some(ns))
+                    && self
+                        .phase
+                        .as_ref()
+                        .is_none_or(|phase| status.is_some_and(|i| &row.cells[i].text == phase))
                     && (query.is_empty()
                         || row
                             .cells
@@ -93,6 +104,30 @@ impl Rows {
                     order
                 }
             });
+        }
+    }
+    fn apply_metrics(&mut self) {
+        if self.resource.key != "pods" {
+            return;
+        }
+        let columns = self.resource.columns();
+        let cpu = columns.iter().position(|c| *c == "CPU").unwrap();
+        let mem = columns.iter().position(|c| *c == "MEM").unwrap();
+        for row in &mut self.rows {
+            let usage = row
+                .namespace
+                .as_ref()
+                .and_then(|ns| self.metrics.get(ns))
+                .and_then(|pods| pods.get(&row.name));
+            for (column, unit, amount) in [
+                (cpu, "m", usage.map(|u| u.0)),
+                (mem, "Mi", usage.map(|u| u.1)),
+            ] {
+                row.cells[column] = amount.map_or_else(
+                    || catalog::Cell::text("—"),
+                    |n| catalog::Cell::formatted(n, format!("{n}{unit}")),
+                );
+            }
         }
     }
     pub fn hidden_selected_count(&self) -> usize {
@@ -136,6 +171,7 @@ impl Rows {
                 row
             })
             .collect();
+        self.apply_metrics();
         self.selected.retain(|id| self.objects.contains_key(id));
         self.rebuild();
     }
@@ -167,12 +203,14 @@ impl TableDelegate for Rows {
         }
         let label = columns[col - 1];
         let column = Column::new(label, label.to_uppercase())
-            .width(px(if col == 1 {
-                270.
-            } else if label == "Namespace" {
-                150.
-            } else {
-                125.
+            .width(px(match label {
+                "Name" => 260.,
+                "Namespace" => 150.,
+                "Status" | "Containers" => 120.,
+                "Restarts" => 95.,
+                "CPU" | "MEM" | "Age" => 78.,
+                "Node" => 175.,
+                _ => 125.,
             }))
             .min_width(px(70.))
             .movable(false)
@@ -313,6 +351,7 @@ impl TableDelegate for Rows {
                 .into_any_element();
         }
         if col > record.cells.len() {
+            let owner = self.owner.clone();
             let panel = self.panel.clone();
             let cluster = self.cluster.clone();
             let key = self.key.clone();
@@ -333,25 +372,38 @@ impl TableDelegate for Rows {
                             let object = object.clone();
                             let key = key.clone();
                             let name = record.name.clone();
-                            menu.item(PopupMenuItem::new("View details").on_click(
+                            let detail_key = key.clone();
+                            let detail_object = object.clone();
+                            let mut menu = menu.item(PopupMenuItem::new("View details").on_click(
                                 move |_, _, cx| {
                                     panel.update(cx, |panel, cx| {
-                                        if let Some(object) = &object {
+                                        if let Some(object) = &detail_object {
                                             panel.inspect(
                                                 cluster.clone(),
-                                                key.clone(),
+                                                detail_key.clone(),
                                                 object.clone(),
                                                 cx,
                                             );
                                         }
                                     });
                                 },
-                            ))
-                            .item(
-                                PopupMenuItem::new("Copy name").on_click(move |_, _, cx| {
-                                    cx.write_to_clipboard(ClipboardItem::new_string(name.clone()))
-                                }),
-                            )
+                            ));
+                            if let (Some(owner), Some(object)) = (&owner, &object) {
+                                for &action in admin_labels(&key) {
+                                    let object = object.clone();
+                                    let owner = owner.clone();
+                                    menu = menu.item(PopupMenuItem::new(action).on_click(
+                                        move |_, w, cx| {
+                                            let _ = owner.update(cx, |p, cx| {
+                                                p.admin(action, vec![object.clone()], w, cx)
+                                            });
+                                        },
+                                    ));
+                                }
+                            }
+                            menu.item(PopupMenuItem::new("Copy name").on_click(move |_, _, cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(name.clone()))
+                            }))
                         }),
                 )
                 .into_any_element();
@@ -360,6 +412,49 @@ impl TableDelegate for Rows {
         let cluster = self.cluster.clone();
         let key = self.key.clone();
         let object = self.objects.get(&record.id).cloned();
+        let label = self.resource.columns()[col - 1];
+        let value = &record.cells[col - 1].text;
+        let content = match label {
+            "Status" => {
+                let color = match value.as_str() {
+                    "Running" | "Ready" | "Active" | "Bound" | "Deployed" | "deployed" => {
+                        cx.theme().success
+                    }
+                    "Pending" | "Terminating" => cx.theme().warning,
+                    "Failed" | "Error" | "NotReady" | "CrashLoopBackOff" => cx.theme().danger,
+                    _ => cx.theme().muted_foreground,
+                };
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .text_color(color)
+                    .child(div().rounded_full().size(px(7.)).bg(color))
+                    .child(value.clone())
+                    .into_any_element()
+            }
+            "Containers" => {
+                let (ready, count) = value
+                    .split_once('/')
+                    .and_then(|(a, b)| Some((a.parse::<usize>().ok()?, b.parse::<usize>().ok()?)))
+                    .unwrap_or_default();
+                div()
+                    .flex()
+                    .gap_1()
+                    .id(("container-indicators", row))
+                    .aria_label(value.clone())
+                    .children((0..count.min(8)).map(|i| {
+                        div().size(px(10.)).rounded(px(2.)).bg(if i < ready {
+                            cx.theme().success
+                        } else {
+                            cx.theme().warning
+                        })
+                    }))
+                    .when(count > 8, |d| d.child(format!("+{}", count - 8)))
+                    .into_any_element()
+            }
+            _ => div().truncate().child(value.clone()).into_any_element(),
+        };
         div()
             .id(SharedString::from(format!(
                 "resource-cell:{}:{col}",
@@ -393,7 +488,7 @@ impl TableDelegate for Rows {
             } else {
                 cx.theme().muted_foreground
             })
-            .child(record.cells[col - 1].text.clone())
+            .child(content)
             .into_any_element()
     }
     fn cell_label(&self, row: usize, col: usize, _: &App) -> Option<SharedString> {
@@ -432,6 +527,8 @@ pub struct ResourcePage {
     action_focus: [FocusHandle; 5],
     backend: Arc<Backend>,
     job: Job<Snapshot>,
+    metrics_job: Option<Job<crate::backend::overview::PodUsage>>,
+    next_metrics: std::time::Instant,
     title: String,
     seen_data_revision: u64,
     seen_mutation_revision: u64,
@@ -439,11 +536,23 @@ pub struct ResourcePage {
     restart_ready: Option<crate::backend::mutation::Prepared>,
     restart_job: Option<Job<crate::backend::mutation::BatchReport>>,
     restart_report: Option<crate::backend::mutation::BatchReport>,
+    drain: Option<Job<crate::backend::drain::DrainProgress>>,
+    action_label: &'static str,
     restart_confirming: bool,
     restart_task: Option<Task<()>>,
     restart_status: String,
     _poll: Task<()>,
     _subscriptions: Vec<Subscription>,
+}
+fn admin_labels(key: &str) -> &'static [&'static str] {
+    match key {
+        "deployments" | "statefulsets" => &["Scale", "Delete"],
+        "nodes" => &["Cordon", "Uncordon", "Drain"],
+        "pods" => &["Logs", "Delete"],
+        "helm" | "overview" | "definitions" => &[],
+        k if crate::catalog::RESOURCES.iter().any(|r| r.key == k) => &["Delete"],
+        _ => &[],
+    }
 }
 impl ResourcePage {
     pub fn new(
@@ -460,14 +569,19 @@ impl ResourcePage {
         }
         let job = backend.resources(cluster.clone(), key.clone());
         let title = format!("{} / {}", document.context, document.title);
+        let mut rows = Rows::new(cluster, resource, panel, key);
+        rows.owner = Some(cx.weak_entity());
         let table = cx.new(|cx| {
-            TableState::new(Rows::new(cluster, resource, panel, key), window, cx)
+            TableState::new(rows, window, cx)
                 .row_selectable(true)
                 .col_selectable(false)
         });
         let filter = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder(format!("Filter {}…", resource.title.to_lowercase()))
+            InputState::new(window, cx).placeholder(match resource.key {
+                "pods" => "Filter pods, namespace, status…".into(),
+                "nodes" => "Filter nodes, zone, instance type…".into(),
+                _ => format!("Filter {}…", resource.title.to_lowercase()),
+            })
         });
         let changed = cx.subscribe(&filter, |this, input, event: &InputEvent, cx| {
             if matches!(event, InputEvent::Change) {
@@ -487,6 +601,27 @@ impl ResourcePage {
                 if entity
                     .update(cx, |this, cx| {
                         this.poll_restart(cx);
+                        if this.table.read(cx).delegate().resource.key == "pods" {
+                            if let Some(result) = this.metrics_job.as_mut().and_then(Job::take) {
+                                this.metrics_job = None;
+                                this.next_metrics =
+                                    std::time::Instant::now() + Duration::from_secs(30);
+                                this.table.update(cx, |table, cx| {
+                                    let rows = table.delegate_mut();
+                                    rows.metrics = result.unwrap_or_default();
+                                    rows.apply_metrics();
+                                    rows.rebuild();
+                                    cx.notify();
+                                });
+                            } else if this.metrics_job.is_none()
+                                && std::time::Instant::now() >= this.next_metrics
+                            {
+                                this.metrics_job = Some(
+                                    this.backend
+                                        .pod_usage(&this.table.read(cx).delegate().cluster),
+                                );
+                            }
+                        }
                         let cluster = this.table.read(cx).delegate().cluster.clone();
                         let mutation_revision = this.backend.mutation_revision(&cluster);
                         if this.seen_mutation_revision != mutation_revision {
@@ -564,12 +699,16 @@ impl ResourcePage {
             restart_ready: None,
             restart_job: None,
             restart_report: None,
+            drain: None,
+            action_label: "Restart",
             restart_confirming: false,
             restart_task: None,
             restart_status: String::new(),
             action_focus: std::array::from_fn(|_| cx.focus_handle()),
             backend,
             job,
+            metrics_job: None,
+            next_metrics: std::time::Instant::now(),
             title,
             _poll: poll,
             _subscriptions: vec![changed, observe],
@@ -589,11 +728,46 @@ impl ResourcePage {
         });
         self.table.focus_handle(cx).focus(window, cx);
     }
+    fn create_namespace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder("Namespace name"));
+        let owner = cx.weak_entity();
+        window.open_dialog(cx, move |dialog, _, _| {
+            let owner = owner.clone();
+            let input = input.clone();
+            dialog
+                .title("Create namespace")
+                .centered()
+                .child(Input::new(&input))
+                .child(
+                    Button::new("review-namespace")
+                        .primary()
+                        .label("Review")
+                        .on_click(move |_, window, cx| {
+                            let name = input.read(cx).value().trim().to_owned();
+                            window.close_dialog(cx);
+                            let _ = owner.update(cx, |p, cx| {
+                                if p.restart_busy() {
+                                    return;
+                                }
+                                let rows = p.table.read(cx).delegate();
+                                p.restart_prepare =
+                                    Some(p.backend.prepare_namespace(&rows.cluster, name));
+                                p.action_label = "Create namespace";
+                                p.restart_status = "Checking namespace…".into();
+                                cx.notify();
+                            });
+                        }),
+                )
+        });
+    }
     fn restart_busy(&self) -> bool {
-        self.restart_prepare.is_some() || self.restart_confirming || self.restart_job.is_some()
+        self.drain.is_some()
+            || self.restart_prepare.is_some()
+            || self.restart_confirming
+            || self.restart_job.is_some()
     }
     pub fn permit_close(&self, _: &mut Window, _: &mut App) -> Task<bool> {
-        Task::ready(!self.restart_busy())
+        Task::ready(self.drain.is_some() || !self.restart_busy())
     }
     fn restart(&mut self, cx: &mut Context<Self>) {
         if self.restart_busy()
@@ -604,6 +778,7 @@ impl ResourcePage {
         {
             return;
         }
+        self.action_label = "Restart";
         let rows = self.table.read(cx).delegate();
         let objects = rows
             .rows
@@ -620,7 +795,172 @@ impl ResourcePage {
         self.restart_status = "Reviewing selected targets · no writes sent".into();
         cx.notify();
     }
+    fn admin(
+        &mut self,
+        label: &'static str,
+        objects: Vec<serde_json::Value>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if label == "Logs" {
+            let rows = self.table.read(cx).delegate();
+            let cluster = rows.cluster.clone();
+            let panel = rows.panel.clone();
+            panel.update(cx, |p, cx| {
+                p.inspect(
+                    cluster,
+                    "logs".into(),
+                    serde_json::Value::Array(objects),
+                    cx,
+                )
+            });
+            return;
+        }
+        if self.backend.is_read_only()
+            || self.restart_busy()
+            || self
+                .restart_report
+                .as_ref()
+                .is_some_and(|r| r.check.is_some())
+        {
+            self.restart_status =
+                "Action unavailable while read-only or another request is pending".into();
+            cx.notify();
+            return;
+        }
+        let key = self.table.read(cx).delegate().key.clone();
+        if label == "Drain" {
+            if objects.len() != 1 {
+                self.restart_status = "Select one node to drain".into();
+                cx.notify();
+                return;
+            }
+            let node = objects[0].clone();
+            let cluster = self.table.read(cx).delegate().cluster.clone();
+            let answer = crate::confirm::ask(
+                "Drain node?",
+                format!(
+                    "{} / {}\nCordon this node and evict eligible Pods. Cancellation leaves the node cordoned.",
+                    self.title, node["metadata"]["name"]
+                ),
+                "Drain",
+                window,
+                cx,
+            );
+            self.restart_confirming = true;
+            self.restart_task = Some(cx.spawn_in(window, async move |owner, cx| {
+                let yes = answer.await;
+                let _ = owner.update(cx, |p, cx| {
+                    p.restart_confirming = false;
+                    if yes {
+                        p.drain = Some(p.backend.drain(&cluster, node));
+                        p.restart_status = "Starting drain…".into();
+                    }
+                    cx.notify()
+                });
+            }));
+            return;
+        }
+        if label == "Scale" || (label == "Delete" && key == "namespaces") {
+            let prompt = if label == "Scale" {
+                "Desired replica count".to_owned()
+            } else {
+                if objects.len() != 1 {
+                    self.restart_status = "Select one namespace to confirm its name".into();
+                    cx.notify();
+                    return;
+                }
+                format!(
+                    "Type the namespace name: {}",
+                    objects[0]["metadata"]["name"].as_str().unwrap_or("")
+                )
+            };
+            let input = cx.new(|cx| InputState::new(window, cx).placeholder(prompt.clone()));
+            let owner = cx.weak_entity();
+            window.open_dialog(cx, move |dialog, _, _| {
+                let input = input.clone();
+                let objects = objects.clone();
+                let owner = owner.clone();
+                dialog
+                    .title(label)
+                    .centered()
+                    .child(prompt.clone())
+                    .child(Input::new(&input))
+                    .child(
+                        Button::new("review-admin")
+                            .label("Review")
+                            .on_click(move |_, w, cx| {
+                                let value = input.read(cx).value().to_string();
+                                let action = if label == "Scale" {
+                                    let Some(n) = value
+                                        .trim()
+                                        .parse::<u32>()
+                                        .ok()
+                                        .filter(|n| *n <= i32::MAX as u32)
+                                    else {
+                                        w.close_dialog(cx);
+                                        let _ = owner.update(cx, |p, cx| {
+                                            p.restart_status =
+                                                "Enter a nonnegative 32-bit replica count".into();
+                                            cx.notify()
+                                        });
+                                        return;
+                                    };
+                                    crate::backend::mutation::AdminAction::Scale(n)
+                                } else {
+                                    crate::backend::mutation::AdminAction::Delete(Some(value))
+                                };
+                                w.close_dialog(cx);
+                                let _ = owner.update(cx, |p, cx| {
+                                    p.prepare_admin(label, action, objects.clone(), cx)
+                                });
+                            }),
+                    )
+            });
+        } else {
+            let action = match label {
+                "Cordon" => crate::backend::mutation::AdminAction::Cordon(true),
+                "Uncordon" => crate::backend::mutation::AdminAction::Cordon(false),
+                "Delete" => crate::backend::mutation::AdminAction::Delete(None),
+                _ => return,
+            };
+            self.prepare_admin(label, action, objects, cx);
+        }
+    }
+    fn prepare_admin(
+        &mut self,
+        label: &'static str,
+        action: crate::backend::mutation::AdminAction,
+        objects: Vec<serde_json::Value>,
+        cx: &mut Context<Self>,
+    ) {
+        let rows = self.table.read(cx).delegate();
+        self.restart_prepare =
+            Some(
+                self.backend
+                    .prepare_admin(&rows.cluster, &rows.key, objects, action),
+            );
+        self.action_label = label;
+        self.restart_report = None;
+        self.restart_status = format!("Reviewing {label} targets…");
+        cx.notify();
+    }
     fn poll_restart(&mut self, cx: &mut Context<Self>) {
+        if let Some(result) = self.drain.as_mut().and_then(Job::take) {
+            let done = result.as_ref().map_or(true, |r| r.done);
+            self.restart_status = result.map(|r| r.message).unwrap_or_else(|e| e);
+            if done {
+                self.drain = None;
+                let rows = self.table.read(cx).delegate();
+                let panel = rows.panel.clone();
+                let cluster = rows.cluster.clone();
+                panel.update(cx, |p, cx| {
+                    p.activity(&cluster, format!("Drain · {}", self.restart_status), cx)
+                });
+                self.refresh(cx);
+            }
+            cx.notify();
+        }
         if let Some(result) = self.restart_prepare.as_mut().and_then(Job::take) {
             self.restart_prepare = None;
             match result {
@@ -668,8 +1008,12 @@ impl ResourcePage {
                 Err(e) => self.restart_status = e,
             }
             let panel = self.table.read(cx).delegate().panel.clone();
-            let message = format!("Bulk restart · {} · {}", self.title, self.restart_status);
-            panel.update(cx, |panel, cx| panel.record(message, cx));
+            let message = format!(
+                "{} · {} · {}",
+                self.action_label, self.title, self.restart_status
+            );
+            let cluster = self.table.read(cx).delegate().cluster.clone();
+            panel.update(cx, |panel, cx| panel.activity(&cluster, message, cx));
             self.refresh(cx);
             cx.notify();
         }
@@ -681,9 +1025,9 @@ impl ResourcePage {
         cx: &mut Context<Self>,
     ) {
         let answer = crate::confirm::ask(
-            "Restart selected resources?",
+            &format!("{} selected resources?", self.action_label),
             plan.review(&self.title),
-            "Restart",
+            self.action_label,
             window,
             cx,
         );
@@ -693,7 +1037,7 @@ impl ResourcePage {
                 this.restart_confirming = false;
                 if accepted {
                     this.restart_job = Some(this.backend.execute_mutation(plan));
-                    this.restart_status = "Requesting restart…".into();
+                    this.restart_status = format!("{} requested…", this.action_label);
                 } else {
                     this.restart_status = "Cancelled · no writes sent".into();
                 }
@@ -761,6 +1105,40 @@ impl ResourcePage {
                         )
                     },
                 )
+                .when(!admin_labels(&rows.key).is_empty(), |d| {
+                    let owner = cx.weak_entity();
+                    let labels = admin_labels(&rows.key);
+                    d.child(
+                        Button::new("bulk-actions")
+                            .icon(IconName::Ellipsis)
+                            .ghost()
+                            .small()
+                            .accessibility_label("More actions")
+                            .disabled(self.restart_busy())
+                            .dropdown_menu(move |mut menu, _, _| {
+                                for &action in labels {
+                                    let owner = owner.clone();
+                                    menu = menu.item(PopupMenuItem::new(action).on_click(
+                                        move |_, w, cx| {
+                                            let _ = owner.update(cx, |p, cx| {
+                                                let rows = p.table.read(cx).delegate();
+                                                let objects = rows
+                                                    .rows
+                                                    .iter()
+                                                    .filter(|r| rows.selected.contains(&r.id))
+                                                    .filter_map(|r| {
+                                                        rows.objects.get(&r.id).cloned()
+                                                    })
+                                                    .collect();
+                                                p.admin(action, objects, w, cx);
+                                            });
+                                        },
+                                    ));
+                                }
+                                menu
+                            }),
+                    )
+                })
                 .child(
                     Button::new("bulk-copy-names")
                         .label(if self.compact_actions {
@@ -832,9 +1210,16 @@ impl Render for ResourcePage {
         }
         let rows = self.table.read(cx).delegate();
         let resource = rows.resource;
-        let title = self.title.clone();
+        let title = if resource.group.is_empty() {
+            self.title.clone()
+        } else {
+            self.title.rsplit_once(" / ").map_or_else(
+                || self.title.clone(),
+                |(context, name)| format!("{context} / {} / {name}", resource.group.to_lowercase()),
+            )
+        };
         let summary = if rows.status.starts_with("Connected") {
-            "Watching"
+            "live"
         } else if rows.status.starts_with("Read-only") {
             "Read-only"
         } else if rows.status.starts_with("Watch unavailable") {
@@ -849,7 +1234,11 @@ impl Render for ResourcePage {
             && !rows.status.starts_with("Read-only")
             && !rows.status.starts_with("Watch unavailable")
             && !rows.status.starts_with("Loading");
-        let count = format!("{} items · {summary}", rows.visible.len());
+        let count = if rows.visible.len() == rows.rows.len() {
+            format!("{} items   ● {summary}", rows.rows.len())
+        } else {
+            format!("{} of {} · {summary}", rows.visible.len(), rows.rows.len())
+        };
         let namespace = rows.namespace.as_deref().unwrap_or("all").to_owned();
         let selected = !rows.selected.is_empty() && resource.key != "overview";
         let measure = cx.weak_entity();
@@ -890,6 +1279,44 @@ impl Render for ResourcePage {
                 }
                 menu
             });
+        let phase_filter = resource
+            .columns()
+            .iter()
+            .position(|c| *c == "Status")
+            .map(|i| {
+                let phases = rows
+                    .rows
+                    .iter()
+                    .map(|r| r.cells[i].text.clone())
+                    .collect::<std::collections::BTreeSet<_>>();
+                let owner = cx.weak_entity();
+                Button::new("status-filter")
+                    .small()
+                    .icon(gpui::assets::IconName::Funnel)
+                    .label(format!(
+                        "Status: {}",
+                        rows.phase.as_deref().unwrap_or("all")
+                    ))
+                    .dropdown_menu(move |mut menu, _, _| {
+                        for phase in std::iter::once(None).chain(phases.iter().cloned().map(Some)) {
+                            let owner = owner.clone();
+                            menu = menu.item(
+                                PopupMenuItem::new(phase.clone().unwrap_or_else(|| "all".into()))
+                                    .on_click(move |_, _, cx| {
+                                        let _ = owner.update(cx, |p, cx| {
+                                            p.table.update(cx, |t, cx| {
+                                                let r = t.delegate_mut();
+                                                r.phase = phase.clone();
+                                                r.rebuild();
+                                                cx.notify()
+                                            })
+                                        });
+                                    }),
+                            );
+                        }
+                        menu
+                    })
+            });
         let refresh = Button::new("refresh-resources")
             .icon(IconName::RefreshCw)
             .small()
@@ -897,11 +1324,9 @@ impl Render for ResourcePage {
             .accessibility_label("Refresh resources")
             .on_click(cx.listener(|this, _, _, cx| this.refresh(cx)));
         let apply = Button::new("apply-yaml")
-            .label(if compact {
-                "Apply YAML"
-            } else {
-                "Apply YAML…"
-            })
+            .icon(IconName::Plus)
+            .primary()
+            .label(if compact { "YAML" } else { "New from YAML" })
             .small()
             .h(px(32.))
             .on_click(cx.listener(|this, _, _, cx| {
@@ -926,10 +1351,28 @@ impl Render for ResourcePage {
             .items_center()
             .gap_2()
             .min_w_0()
-            .child(div().flex_1().min_w(px(90.)).child(filter))
+            .child(div().flex_1().max_w(px(450.)).min_w(px(90.)).child(filter))
             .when(resource.namespaced, |toolbar| toolbar.child(namespaces))
-            .child(apply)
-            .child(refresh);
+            .when_some(phase_filter, |d, f| d.child(f))
+            .child(div().flex_1())
+            .child(refresh)
+            .when(resource.key == "namespaces", |d| {
+                d.child(
+                    Button::new("create-namespace")
+                        .small()
+                        .label("Create namespace")
+                        .disabled(
+                            self.backend.is_read_only()
+                                || self.restart_busy()
+                                || self
+                                    .restart_report
+                                    .as_ref()
+                                    .is_some_and(|r| r.check.is_some()),
+                        )
+                        .on_click(cx.listener(|p, _, w, cx| p.create_namespace(w, cx))),
+                )
+            })
+            .child(apply);
         div()
             .id(("resource-page", cx.entity_id()))
             .test_support()
@@ -983,7 +1426,7 @@ impl Render for ResourcePage {
             .min_h_0()
             .flex()
             .flex_col()
-            .p_4()
+            .p_5()
             .gap_3()
             .font_family(cx.theme().mono_font_family.clone())
             .text_size(px(13.))
@@ -1004,6 +1447,26 @@ impl Render for ResourcePage {
                     .child(count),
                 toolbar,
             ))
+            .when(self.drain.is_some(), |d| {
+                d.child(
+                    Button::new("cancel-drain")
+                        .small()
+                        .label("Cancel drain")
+                        .on_click(cx.listener(|p, _, _, cx| {
+                            p.drain = None;
+                            p.restart_status =
+                                "Drain cancelled · check node scheduling and remaining Pods".into();
+                            let rows = p.table.read(cx).delegate();
+                            let panel = rows.panel.clone();
+                            let cluster = rows.cluster.clone();
+                            panel.update(cx, |state, cx| {
+                                state.activity(&cluster, p.restart_status.clone(), cx)
+                            });
+                            p.refresh(cx);
+                            cx.notify();
+                        })),
+                )
+            })
             .when(!self.restart_status.is_empty(), |d| {
                 d.child(
                     div()

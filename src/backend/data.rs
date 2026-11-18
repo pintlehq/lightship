@@ -264,7 +264,8 @@ impl Backend {
         session: &Arc<Session>,
         result: &ApplyReport,
     ) {
-        if let Some(object) = &result.object
+        if result.state == ApplyState::Applied
+            && let Some(object) = &result.object
             && session.policy.active()
             && self
                 .session(id)
@@ -362,10 +363,11 @@ impl Session {
             ));
         }
         if current["metadata"]["resourceVersion"] != edit.target.version {
-            return Ok(ApplyReport::new(
-                ApplyState::Conflict,
-                "Resource changed · draft retained. Reset and refresh before applying.",
-            ));
+            return Ok(ApplyReport {
+                state: ApplyState::Conflict,
+                message: "Resource changed · review your draft against the latest data".into(),
+                object: Some(current),
+            });
         }
         if current["immutable"] == true {
             return Ok(ApplyReport::new(
@@ -390,10 +392,20 @@ impl Session {
             Ok(Err(kube::Error::Api(e))) if e.code == 401 => {
                 Err("Credentials expired · reconnect before applying".into())
             }
-            Ok(Err(kube::Error::Api(e))) if e.code == 409 => Ok(ApplyReport::new(
-                ApplyState::Conflict,
-                "Resource changed · draft retained. Reset and refresh before applying.",
-            )),
+            Ok(Err(kube::Error::Api(e))) if e.code == 409 => {
+                let latest =
+                    tokio::time::timeout(Duration::from_secs(10), self.json(&edit.target.path()))
+                        .await
+                        .ok()
+                        .and_then(Result::ok)
+                        .filter(|o| o["metadata"]["uid"] == edit.target.uid);
+                Ok(ApplyReport {
+                    state: ApplyState::Conflict,
+                    message: "Resource changed · draft retained. Review latest data or refresh."
+                        .into(),
+                    object: latest,
+                })
+            }
             Ok(Err(kube::Error::Api(e))) if matches!(e.code, 400 | 404 | 413 | 422) => {
                 let report = self.reconcile_data(&edit).await?;
                 if report.state == ApplyState::Unchanged {
@@ -616,6 +628,7 @@ mod tests {
                 .with_layer(&tower::filter::FilterLayer::new(move |r| guard.check(r)))
                 .build();
             let backend = Arc::new(Backend {
+                read_only: Default::default(),
                 runtime: tokio::runtime::Handle::current(),
                 sessions: Mutex::default(),
                 overviews: Mutex::default(),
@@ -629,6 +642,8 @@ mod tests {
                     policy,
                     specs: vec![],
                     cancelled: watch::channel(false).0,
+                    server: String::new(),
+                    version: String::new(),
                     health: Mutex::default(),
                 }),
             );

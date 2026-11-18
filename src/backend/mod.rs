@@ -2,6 +2,7 @@
 pub mod config;
 pub mod data;
 mod details;
+pub mod drain;
 pub mod mutation;
 pub mod overview;
 mod policy;
@@ -79,6 +80,8 @@ pub struct Snapshot {
 }
 #[derive(Clone)]
 pub struct Detail {
+    pub sections: Vec<(String, Vec<String>)>,
+    pub revisions: Vec<Value>,
     pub object: Value,
     pub events: Value,
 }
@@ -117,6 +120,7 @@ impl<T: Clone> Drop for Job<T> {
     }
 }
 pub struct Backend {
+    read_only: Arc<std::sync::atomic::AtomicBool>,
     runtime: tokio::runtime::Handle,
     sessions: Mutex<HashMap<String, Arc<Session>>>,
     data_updates: Mutex<data::DataUpdates>,
@@ -129,11 +133,14 @@ struct Session {
     policy: policy::Policy,
     cancelled: watch::Sender<bool>,
     health: Mutex<String>,
+    server: String,
+    version: String,
 }
 impl Backend {
     pub fn new() -> Arc<Self> {
         static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
         Arc::new(Self {
+            read_only: Default::default(),
             runtime: RUNTIME
                 .get_or_init(|| {
                     tokio::runtime::Builder::new_multi_thread()
@@ -148,6 +155,13 @@ impl Backend {
             overviews: Mutex::new(HashMap::new()),
             data_updates: Mutex::default(),
         })
+    }
+    pub fn is_read_only(&self) -> bool {
+        self.read_only.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    pub fn set_read_only(&self, value: bool) {
+        self.read_only
+            .store(value, std::sync::atomic::Ordering::SeqCst);
     }
     fn job<T: Clone + Send + Sync + 'static>(
         &self,
@@ -168,24 +182,27 @@ impl Backend {
         let backend = self.clone();
         self.job(async move {
             let config = connection.config().await?;
-            let policy = policy::Policy::default();
+            let policy = policy::Policy::with_read_only(backend.read_only.clone());
             for resource in crate::catalog::RESOURCES {
                 if !matches!(resource.key, "overview" | "helm") {
                     policy.register(builtin(resource.key).collection(None));
                 }
             }
-            policy.register(builtin("replicasets").collection(None));
+            for kind in ["replicasets", "resourcequotas", "limitranges"] {
+                policy.register(builtin(kind).collection(None));
+            }
             for kind in ["pods", "nodes"] {
                 policy.register(format!("/apis/metrics.k8s.io/v1beta1/{kind}"));
             }
             let guard = policy.clone();
+            let server = config.cluster_url.to_string();
             let client = ClientBuilder::try_from(config)
                 .map_err(|_| "Could not initialize verified TLS client")?
                 .with_layer(&tower::filter::FilterLayer::new(move |req| {
                     guard.check(req)
                 }))
                 .build();
-            client.apiserver_version().await.map_err(error)?;
+            let version = client.apiserver_version().await.map_err(error)?.git_version;
             let mut specs = Vec::new();
             // Discover groups independently: an unavailable aggregated API must not hide core resources.
             if let Ok(groups) = client.list_api_groups().await {
@@ -235,6 +252,8 @@ impl Backend {
                     policy,
                     cancelled: watch::channel(false).0,
                     health: Mutex::new("Connected".into()),
+                    server,
+                    version,
                 }),
             );
             if let Some(hub) = backend.overviews.lock().unwrap().get(&id) {
@@ -256,6 +275,11 @@ impl Backend {
             session.policy.revoke();
             let _ = session.cancelled.send(true);
         }
+    }
+    pub fn server_version(&self, id: &str) -> Option<(String, String)> {
+        self.session(id)
+            .ok()
+            .map(|s| (s.server.clone(), s.version.clone()))
     }
     pub fn connection_status(&self, id: &str) -> Option<String> {
         self.session(id)
@@ -286,7 +310,11 @@ impl Backend {
                     let session = backend.session(&id)?;
                     let mut cancellation=session.cancelled.subscribe();
                     let spec = backend.spec(&id, &key);
-                    if key == "helm" { let objects = session.helm().await?; let _ = sender.send(Some(Ok(Snapshot { objects, status: "Read-only · refreshed every 30s".into() }))); tokio::time::sleep(Duration::from_secs(30)).await; return Ok(()); }
+                    if key == "helm" { let mut latest=std::collections::BTreeMap::new();for release in session.helm().await? {
+                        let key=(release["metadata"]["namespace"].as_str().unwrap_or("").to_owned(),release["name"].as_str().unwrap_or("").to_owned());
+                        let prior: &mut Value=latest.entry(key).or_default();
+                        if prior.is_null() || prior["version"].as_u64()<release["version"].as_u64(){*prior=release;}
+                    }let objects=latest.into_values().collect(); let _ = sender.send(Some(Ok(Snapshot { objects, status: "Read-only · refreshed every 30s".into() }))); tokio::time::sleep(Duration::from_secs(30)).await; return Ok(()); }
                     let (mut objects, version) = session.list(&spec, None).await?;
                     let _ = sender.send(Some(Ok(Snapshot { objects: objects.clone(), status: "Connected · watching".into() })));
                     let url = format!("{}?watch=true&allowWatchBookmarks=true&timeoutSeconds=60&resourceVersion={}", spec.collection(None), encode(&version));

@@ -21,6 +21,22 @@ pub struct Connection {
 pub struct Settings {
     pub connections: Vec<Connection>,
     pub dark: bool,
+    #[serde(default)]
+    pub theme: Option<String>,
+    #[serde(default)]
+    pub window: Option<SavedWindow>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+pub struct SavedWindow {
+    pub bounds: [f32; 4],
+    pub mode: String,
+}
+impl Settings {
+    pub fn appearance(&self) -> &str {
+        self.theme
+            .as_deref()
+            .unwrap_or(if self.dark { "dark" } else { "light" })
+    }
 }
 const SERVICE: &str = "app.pintle.lightship.readonly.kubeconfig";
 
@@ -34,7 +50,10 @@ pub fn load() -> Result<Settings, String> {
     match std::fs::read(settings_path()) {
         Ok(bytes) => serde_json::from_slice(&bytes)
             .map_err(|_| "Invalid local settings; file has not been overwritten".into()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Settings::default()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Settings {
+            theme: Some("system".into()),
+            ..Default::default()
+        }),
         Err(_) => Err("Cannot read local settings".into()),
     }
 }
@@ -43,6 +62,9 @@ pub fn save(settings: &Settings) -> Result<(), String> {
     save_to(&settings_path(), settings)
 }
 fn save_to(path: &std::path::Path, settings: &Settings) -> Result<(), String> {
+    write_json(path, settings)
+}
+pub fn write_json(path: &std::path::Path, value: &impl Serialize) -> Result<(), String> {
     use std::io::Write;
     let parent = path.parent().ok_or("Invalid settings path")?;
     std::fs::create_dir_all(parent).map_err(|_| "Cannot create settings directory")?;
@@ -56,7 +78,7 @@ fn save_to(path: &std::path::Path, settings: &Settings) -> Result<(), String> {
             options.mode(0o600);
         }
         let mut file = options.open(&temp).map_err(|_| "Cannot write settings")?;
-        file.write_all(&serde_json::to_vec_pretty(settings).map_err(|_| "Cannot encode settings")?)
+        file.write_all(&serde_json::to_vec_pretty(value).map_err(|_| "Cannot encode settings")?)
             .map_err(|_| "Cannot write settings")?;
         file.sync_all().map_err(|_| "Cannot sync settings")?;
         std::fs::rename(&temp, path).map_err(|_| "Cannot replace settings")
@@ -303,6 +325,7 @@ mod tests {
                 },
             ],
             dark: true,
+            ..Default::default()
         };
         save_to(&path, &settings).unwrap();
         let saved: Settings = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
