@@ -7,9 +7,10 @@ cargo build --locked --profile "$profile"
 target_dir="$(cargo metadata --offline --locked --format-version 1 --no-deps | python3 -c 'import json,sys;print(json.load(sys.stdin)["target_directory"])')"
 binary_dir="$profile"
 if [ "$profile" = dev ]; then binary_dir=debug; fi
-bundle="$PWD/dist/Lightship GPUI.app"
+bundle="$PWD/dist/Lightship.app"
 mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources/licenses"
 cp "$target_dir/$binary_dir/lightship" "$bundle/Contents/MacOS/lightship"
+cp assets/macos/Lightship.icns "$bundle/Contents/Resources/Lightship.icns"
 cp LICENSE "$bundle/Contents/Resources/licenses/Lightship-LICENSE"
 cp licenses/JetBrainsMono-OFL.txt "$bundle/Contents/Resources/licenses/"
 cat > "$bundle/Contents/Info.plist" <<'PLIST'
@@ -17,9 +18,10 @@ cat > "$bundle/Contents/Info.plist" <<'PLIST'
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>CFBundleIdentifier</key><string>app.pintle.lightship.gpui</string>
-<key>CFBundleName</key><string>Lightship GPUI</string>
-<key>CFBundleDisplayName</key><string>Lightship GPUI</string>
+<key>CFBundleName</key><string>Lightship</string>
+<key>CFBundleDisplayName</key><string>Lightship</string>
 <key>CFBundleExecutable</key><string>lightship</string>
+<key>CFBundleIconFile</key><string>Lightship.icns</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>0.1.0</string>
 <key>CFBundleVersion</key><string>1</string>
@@ -29,4 +31,6 @@ cat > "$bundle/Contents/Info.plist" <<'PLIST'
 </dict></plist>
 PLIST
 codesign --force --sign - "$bundle"
+# Let Finder detect icon changes when rebuilding the bundle in place.
+touch "$bundle"
 printf '%s\n' "$bundle"

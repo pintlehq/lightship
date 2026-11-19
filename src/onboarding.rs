@@ -99,7 +99,6 @@ pub struct AddCluster {
     pasted: bool,
     rows: Vec<Candidate>,
     selected: HashSet<String>,
-    trusted: HashSet<String>,
     known: HashSet<Identity>,
     unreadable: usize,
     loading_known: bool,
@@ -155,7 +154,6 @@ impl AddCluster {
             pasted: false,
             rows: Vec::new(),
             selected: HashSet::new(),
-            trusted: HashSet::new(),
             known: HashSet::new(),
             unreadable: 0,
             loading_known: true,
@@ -178,7 +176,6 @@ impl AddCluster {
         self._picker = None;
         self.rows.clear();
         self.selected.clear();
-        self.trusted.clear();
         self.yaml
             .update(cx, |input, cx| input.set_value("", window, cx));
     }
@@ -192,22 +189,15 @@ impl AddCluster {
             && !self.loading_known
             && !self.selected.is_empty()
             && self.selected.iter().all(|name| {
-                self.rows.iter().any(|r| {
-                    r.name == *name
-                        && !self.added(r)
-                        && match &r.validation {
-                            Ok(None) => true,
-                            Ok(Some(_)) => self.trusted.contains(name),
-                            Err(_) => false,
-                        }
-                })
+                self.rows
+                    .iter()
+                    .any(|r| r.name == *name && !self.added(r) && r.validation.is_ok())
             })
     }
     fn detect(&mut self, delay: Duration, cx: &mut Context<Self>) {
         self.generation += 1;
         self.rows.clear();
         self.selected.clear();
-        self.trusted.clear();
         self.error.clear();
         self._load = None;
         let pasted = self.pasted;
@@ -335,7 +325,6 @@ impl AddCluster {
                 window.close_dialog(cx);
             }
             Err(e) => {
-                self.trusted.clear();
                 self.error = e;
                 cx.notify();
             }
@@ -345,6 +334,10 @@ impl AddCluster {
         px(if self.pasted { 560. } else { 460. })
     }
     pub fn footer(&self, cx: &Context<Self>) -> impl IntoElement {
+        let uses_program = self
+            .rows
+            .iter()
+            .any(|row| self.selected.contains(&row.name) && matches!(row.validation, Ok(Some(_))));
         div()
             .id("add-cluster-footer")
             .test_support()
@@ -359,6 +352,18 @@ impl AddCluster {
             .border_t_1()
             .border_color(cx.theme().border)
             .bg(cx.theme().muted.opacity(0.3))
+            .when(uses_program, |footer| {
+                footer.child(
+                    div()
+                        .id("add-credential-notice")
+                        .test_support()
+                        .min_w_0()
+                        .flex_1()
+                        .text_size(px(12.))
+                        .text_color(cx.theme().muted_foreground)
+                        .child("Adding allows Lightship to run the listed credential programs."),
+                )
+            })
             .child(
                 Button::new("cancel-add-cluster")
                     .label("Cancel")
@@ -370,7 +375,11 @@ impl AddCluster {
             .child(
                 Button::new("add-selected-clusters")
                     .icon(IconName::Plus)
-                    .label("Add clusters")
+                    .label(if self.selected.len() == 1 {
+                        "Add cluster"
+                    } else {
+                        "Add clusters"
+                    })
                     .primary()
                     .disabled(!self.can_add())
                     .on_click(cx.listener(|this, _, window, cx| this.add(window, cx))),
@@ -446,7 +455,7 @@ impl Render for AddCluster {
                 .child(div().id("context-list").flex_shrink_0().border_1().border_color(cx.theme().border).rounded_lg().overflow_hidden()
                     .when(self.rows.is_empty(), |d| d.child(div().h(px(100.)).flex().items_center().justify_center().text_color(cx.theme().muted_foreground).child(empty)))
                     .children(self.rows.iter().enumerate().map(|(index, row)| {
-                        let name = row.name.clone(); let trust_name = name.clone();
+                        let name = row.name.clone();
                         let selected = self.selected.contains(&name); let added = self.added(row);
                         let server = row.identity.as_ref().map(|id| id.server.clone()).unwrap_or_else(|| "Missing server".into());
                         let tooltip = server.clone();
@@ -455,19 +464,17 @@ impl Render for AddCluster {
                             .when(added, |d| d.text_color(cx.theme().muted_foreground))
                             .child(div().flex().items_center().gap_3()
                                 .child(Checkbox::new(SharedString::from(format!("context:{name}"))).accessibility_label(format!("Select {}", row.name)).checked(selected).disabled(added || row.validation.is_err() || self.loading_known)
-                                    .on_change(cx.listener(move |this, checked, _, cx| { if *checked { this.selected.insert(name.clone()); } else { this.selected.remove(&name); this.trusted.remove(&name); } cx.notify(); })))
+                                    .on_change(cx.listener(move |this, checked, _, cx| { if *checked { this.selected.insert(name.clone()); } else { this.selected.remove(&name); } cx.notify(); })))
                                 .child(Icon::new(IconName::Server).size(px(14.)).flex_shrink_0())
                                 .child(div().w(relative(0.43)).min_w_0().child(row.name.clone()))
                                 .child(div().id(SharedString::from(format!("context-server:{}",row.name))).flex_1().min_w_0().truncate().text_size(px(12.)).text_color(cx.theme().muted_foreground)
                                     .tooltip(move |_, cx| cx.new(|_| Tooltip::new(tooltip.clone())).into()).child(server))
                                 .when(added, |d| d.child(div().id(SharedString::from(format!("context-added:{}",row.name))).test_support().px_2().py_0p5().rounded_full().bg(cx.theme().muted).text_size(px(10.)).child("ADDED"))))
                             .when_some(row.validation.as_ref().err(), |d, error| d.child(div().text_size(px(11.)).text_color(cx.theme().danger).child(error.clone())))
-                            .when(selected && !row.plugin.is_empty(), |d| d
-                                .child(div().p_2().rounded_md().bg(cx.theme().muted).text_size(px(11.)).child(row.plugin.clone()))
-                                .child(Checkbox::new(SharedString::from(format!("trust:{trust_name}"))).label("Trust this credential program and configuration")
-                                    .checked(self.trusted.contains(&trust_name)).on_change(cx.listener(move |this, checked, _, cx| {
-                                        if *checked { this.trusted.insert(trust_name.clone()); } else { this.trusted.remove(&trust_name); } cx.notify();
-                                    }))))
+                            .when(selected && !row.plugin.is_empty(), |d| d.child(
+                                div().id(SharedString::from(format!("credential-program:{}", row.name))).test_support()
+                                    .p_2().rounded_md().bg(cx.theme().muted).text_size(px(11.)).child(row.plugin.clone())
+                            ))
                     })))
                 .when(self.loading_known, |d| d.child("Checking saved clusters…"))
                 .when(self.unreadable > 0, |d| d.child(div().id("duplicate-check-warning").text_color(cx.theme().muted_foreground)
@@ -482,6 +489,9 @@ mod tests {
     use gpui::{AnyWindowHandle, TestAppContext, size, test::TestWindowExt};
     use gpui::{App, Focusable};
     const YAML: &str = "apiVersion: v1\nkind: Config\nclusters:\n- name: test\n  cluster:\n    server: https://example.invalid\nusers:\n- name: reader\n  user: {}\ncontexts:\n- name: development\n  context:\n    cluster: test\n    user: reader\n";
+    fn exec_config() -> String {
+        YAML.replace("user: {}", "user:\n    exec:\n      command: /usr/bin/true\n      apiVersion: client.authentication.k8s.io/v1\n      interactiveMode: Never")
+    }
     struct TempConfig(PathBuf);
     impl TempConfig {
         fn new(text: &str) -> Self {
@@ -646,8 +656,10 @@ mod tests {
         });
     }
     #[gpui_kit::test]
-    fn plugin_requires_review_and_cancel_clears_transient_credentials(cx: &mut TestAppContext) {
-        let text = YAML.replace("user: {}", "user:\n    exec:\n      command: /usr/bin/true\n      apiVersion: client.authentication.k8s.io/v1\n      interactiveMode: Never");
+    fn selecting_plugin_shows_add_consent_and_cancel_clears_transient_credentials(
+        cx: &mut TestAppContext,
+    ) {
+        let text = exec_config();
         let (handle, form, app) = open(cx, vec![], vec![]);
         wait(cx, 1);
         step(cx, handle, |window, cx| {
@@ -659,24 +671,15 @@ mod tests {
         });
         wait(cx, 300);
         step(cx, handle, |window, cx| {
-            assert!(window.find_all("trust:development").is_empty());
+            assert!(window.find_all("add-credential-notice").is_empty());
             window.click("context:development", cx);
-            assert!(!form.read(cx).can_add());
-        });
-        step(cx, handle, |window, cx| {
-            window.scroll(
-                "context:development",
-                gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(-900.))),
-                cx,
-            );
-            window.render_frame(cx);
-            window.click("trust:development", cx);
             assert!(form.read(cx).can_add());
+            assert!(!window.find_all("credential-program:development").is_empty());
+            assert!(!window.find_all("add-credential-notice").is_empty());
             window.click("cancel-add-cluster", cx);
             assert!(!window.has_active_dialog(cx));
             assert!(form.read(cx).yaml.read(cx).value().is_empty());
             assert!(form.read(cx).selected.is_empty());
-            assert!(form.read(cx).trusted.is_empty());
             assert!(
                 app.read(cx)
                     .connections
@@ -730,18 +733,40 @@ mod tests {
         });
     }
     #[gpui_kit::test]
-    fn changed_file_revokes_plugin_consent_before_import(cx: &mut TestAppContext) {
-        let text = YAML.replace("user: {}", "user:\n    exec:\n      command: /usr/bin/true\n      apiVersion: client.authentication.k8s.io/v1\n      interactiveMode: Never");
+    fn add_click_approves_only_the_selected_context_program(cx: &mut TestAppContext) {
+        let text =
+            exec_config() + "- name: staging\n  context:\n    cluster: test\n    user: reader\n";
         let file = TempConfig::new(&text);
         let (handle, form, app) = open(cx, vec![file.0.clone()], vec![]);
         wait(cx, 1);
-        step(cx, handle, |_, cx| {
-            form.update(cx, |form, cx| {
-                form.selected.insert("development".into());
-                form.trusted.insert("development".into());
-                assert!(form.can_add());
-                cx.notify();
-            });
+        step(cx, handle, |window, cx| {
+            window.click("context:development", cx);
+            let reviewed = form.read(cx).rows[0].validation.clone().unwrap().unwrap();
+            assert!(
+                app.read(cx)
+                    .connections
+                    .read(cx)
+                    .settings
+                    .connections
+                    .is_empty()
+            );
+            window.click("add-selected-clusters", cx);
+            let saved = &app.read(cx).connections.read(cx).settings.connections;
+            assert_eq!(saved.len(), 1);
+            assert_eq!(saved[0].context, "development");
+            assert_eq!(saved[0].trusted_exec.as_ref(), Some(&reviewed));
+            assert!(!window.has_active_dialog(cx));
+        });
+    }
+    #[gpui_kit::test]
+    fn changed_file_revokes_plugin_consent_before_import(cx: &mut TestAppContext) {
+        let text = exec_config();
+        let file = TempConfig::new(&text);
+        let (handle, form, app) = open(cx, vec![file.0.clone()], vec![]);
+        wait(cx, 1);
+        step(cx, handle, |window, cx| {
+            window.click("context:development", cx);
+            assert!(form.read(cx).can_add());
         });
         std::fs::write(
             &file.0,
@@ -755,7 +780,6 @@ mod tests {
             window.click("add-selected-clusters", cx);
             assert!(window.has_active_dialog(cx));
             assert!(form.read(cx).error.contains("Configuration changed"));
-            assert!(form.read(cx).trusted.is_empty());
             assert!(
                 app.read(cx)
                     .connections

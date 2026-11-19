@@ -506,8 +506,10 @@ impl Lightship {
         let remote = cx.new(|cx| InputState::new(window, cx).placeholder("Remote port"));
         let owner = cx.weak_entity();
         let error = Rc::new(RefCell::new(String::new()));
-        window.open_dialog(cx, move |dialog, _, cx| {
-            let error=error.clone();let message=error.borrow().clone();let uid=uid.clone();
+        crate::desktop::open_dialog(window, cx, move |dialog, _, cx| {
+            let error = error.clone();
+            let message = error.borrow().clone();
+            let uid = uid.clone();
             let owner = owner.clone();
             let target = target.clone();
             let ns = namespace.clone();

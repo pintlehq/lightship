@@ -7,6 +7,7 @@ use gpui::component::{
     checkbox::Checkbox,
     input::{Input, InputEvent, InputState},
     menu::{DropdownMenu, PopupMenuItem},
+    popover::{Popover, PopoverState},
     table::{Column, ColumnSort, TableDelegate, TableState},
 };
 use gpui::{prelude::*, *};
@@ -15,7 +16,7 @@ use pintle_gpui_kit::{
     kit as gpui,
     shell::workspace::Document,
 };
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::{sync::Arc, time::Duration};
 
 pub use crate::inspector::{Inspect, PanelState};
@@ -28,7 +29,7 @@ pub struct Rows {
     pub query: String,
     phase: Option<String>,
     metrics: crate::backend::overview::PodUsage,
-    pub namespace: Option<String>,
+    pub namespaces: BTreeSet<String>,
     pub selected: HashSet<String>,
     pub sort: Option<(usize, ColumnSort)>,
     pub(crate) panel: Entity<PanelState>,
@@ -53,7 +54,7 @@ impl Rows {
             phase: None,
             metrics: Default::default(),
             query: String::new(),
-            namespace: None,
+            namespaces: BTreeSet::new(),
             selected: HashSet::new(),
             sort: None,
             panel,
@@ -65,6 +66,12 @@ impl Rows {
         result.rebuild();
         result
     }
+    pub fn single_namespace(&self) -> Option<&str> {
+        self.namespaces
+            .first()
+            .filter(|_| self.namespaces.len() == 1)
+            .map(String::as_str)
+    }
     pub fn rebuild(&mut self) {
         let query = self.query.trim().to_lowercase();
         let status = self.resource.columns().iter().position(|c| *c == "Status");
@@ -73,9 +80,11 @@ impl Rows {
             .iter()
             .enumerate()
             .filter(|(_, row)| {
-                self.namespace
-                    .as_ref()
-                    .is_none_or(|ns| row.namespace.as_ref() == Some(ns))
+                (self.namespaces.is_empty()
+                    || row
+                        .namespace
+                        .as_ref()
+                        .is_some_and(|ns| self.namespaces.contains(ns)))
                     && self
                         .phase
                         .as_ref()
@@ -731,7 +740,7 @@ impl ResourcePage {
     fn create_namespace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let input = cx.new(|cx| InputState::new(window, cx).placeholder("Namespace name"));
         let owner = cx.weak_entity();
-        window.open_dialog(cx, move |dialog, _, _| {
+        crate::desktop::open_dialog(window, cx, move |dialog, _, _| {
             let owner = owner.clone();
             let input = input.clone();
             dialog
@@ -877,7 +886,7 @@ impl ResourcePage {
             };
             let input = cx.new(|cx| InputState::new(window, cx).placeholder(prompt.clone()));
             let owner = cx.weak_entity();
-            window.open_dialog(cx, move |dialog, _, _| {
+            crate::desktop::open_dialog(window, cx, move |dialog, _, _| {
                 let input = input.clone();
                 let objects = objects.clone();
                 let owner = owner.clone();
@@ -1173,13 +1182,111 @@ impl ResourcePage {
                 .on_click(cx.listener(|page, _, window, cx| page.clear_selection(window, cx))),
         )
     }
-    pub fn set_namespace(&mut self, namespace: Option<String>, cx: &mut Context<Self>) {
-        self.table.update(cx, |table, cx| {
-            table.delegate_mut().namespace = namespace;
-            table.delegate_mut().rebuild();
-            cx.notify();
-        });
+    fn namespace_filter(&self, cx: &App) -> Popover {
+        let table = self.table.clone();
+        let rows = table.read(cx).delegate();
+        let label = match rows.namespaces.len() {
+            0 => "Namespace: all".to_owned(),
+            1 => format!("Namespace: {}", rows.namespaces.first().unwrap()),
+            count => format!("Namespaces: {count}"),
+        };
+        Popover::new("namespace-popover")
+            .w(px(250.))
+            .p_1()
+            .trigger(
+                Button::new("namespace-filter")
+                    .icon(gpui::assets::IconName::Funnel)
+                    .label(label)
+                    .small()
+                    .h(px(32.)),
+            )
+            .content(move |_, _, cx| {
+                let rows = table.read(cx).delegate();
+                let available: BTreeSet<_> = rows
+                    .rows
+                    .iter()
+                    .filter_map(|row| row.namespace.as_ref())
+                    .chain(&rows.namespaces)
+                    .collect();
+                let options = std::iter::once(None).chain(available.into_iter().map(Some));
+                div()
+                    .id("namespace-options")
+                    .test_support()
+                    .max_h(px(320.))
+                    .overflow_y_scroll()
+                    .children(options.map(|name| {
+                        let checked = name.map_or_else(
+                            || rows.namespaces.is_empty(),
+                            |ns| rows.namespaces.contains(ns),
+                        );
+                        Self::namespace_option(&table, name.map(String::as_str), checked, cx)
+                    }))
+            })
     }
+
+    fn namespace_option(
+        table: &Entity<TableState<Rows>>,
+        name: Option<&str>,
+        checked: bool,
+        cx: &Context<PopoverState>,
+    ) -> Div {
+        let label = name.unwrap_or("all");
+        let key = name.unwrap_or("*");
+        let toggle_table = table.clone();
+        let toggle_name = name.map(str::to_owned);
+        let checkbox = Checkbox::new(format!("namespace-check:{key}"))
+            .checked(checked)
+            .accessibility_label(format!("Toggle {label}"))
+            .size(px(28.))
+            .items_center()
+            .justify_center()
+            .on_change(move |checked, _, cx| {
+                toggle_table.update(cx, |table, cx| {
+                    let rows = table.delegate_mut();
+                    match &toggle_name {
+                        Some(ns) if *checked => {
+                            rows.namespaces.insert(ns.clone());
+                        }
+                        Some(ns) => {
+                            rows.namespaces.remove(ns);
+                        }
+                        None => rows.namespaces.clear(),
+                    }
+                    rows.rebuild();
+                    cx.notify();
+                });
+            });
+
+        let select_table = table.clone();
+        let single_name = name.map(str::to_owned);
+        let select = Button::new(format!("namespace-only:{key}"))
+            .ghost()
+            .small()
+            .flex_1()
+            .min_w_0()
+            .accessibility_label(name.map_or_else(
+                || "Show all namespaces".into(),
+                |ns| format!("Show only {ns}"),
+            ))
+            .child(
+                div()
+                    .w_full()
+                    .text_left()
+                    .truncate()
+                    .child(label.to_owned()),
+            )
+            .on_click(cx.listener(move |popover, _, window, cx| {
+                select_table.update(cx, |table, cx| {
+                    let rows = table.delegate_mut();
+                    rows.namespaces = single_name.iter().cloned().collect();
+                    rows.rebuild();
+                    cx.notify();
+                });
+                popover.dismiss(window, cx);
+            }));
+        div().flex().items_center().child(checkbox).child(select)
+    }
+
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         let rows = self.table.read(cx).delegate();
         self.job = self
@@ -1239,46 +1346,15 @@ impl Render for ResourcePage {
         } else {
             format!("{} of {} · {summary}", rows.visible.len(), rows.rows.len())
         };
-        let namespace = rows.namespace.as_deref().unwrap_or("all").to_owned();
         let selected = !rows.selected.is_empty() && resource.key != "overview";
         let measure = cx.weak_entity();
         let compact = self.compact_actions;
-        let owner = cx.weak_entity();
         let filter = Input::new(&self.filter)
             .id("table-filter")
             .aria_label("Filter resources")
             .prefix(gpui::component::Icon::new(IconName::Search).size(px(14.)))
             .small()
             .map(|input| gpui::Styled::h(input, px(32.)));
-        let mut available: Vec<_> = rows
-            .rows
-            .iter()
-            .filter_map(|r| r.namespace.clone())
-            .collect();
-        available.sort();
-        available.dedup();
-        let namespaces = Button::new("namespace-filter")
-            .icon(gpui::assets::IconName::Funnel)
-            .label(format!("Namespace: {namespace}"))
-            .small()
-            .h(px(32.))
-            .dropdown_menu(move |mut menu, _, _| {
-                for namespace in [None]
-                    .into_iter()
-                    .chain(available.clone().into_iter().map(Some))
-                {
-                    let owner = owner.clone();
-                    menu = menu.item(
-                        PopupMenuItem::new(namespace.clone().unwrap_or_else(|| "all".into()))
-                            .on_click(move |_, _, cx| {
-                                let _ = owner.update(cx, |page, cx| {
-                                    page.set_namespace(namespace.clone(), cx)
-                                });
-                            }),
-                    );
-                }
-                menu
-            });
         let phase_filter = resource
             .columns()
             .iter()
@@ -1334,7 +1410,7 @@ impl Render for ResourcePage {
                 let (panel, cluster, namespace) = (
                     rows.panel.clone(),
                     rows.cluster.clone(),
-                    rows.namespace.clone(),
+                    rows.single_namespace().map(str::to_owned),
                 );
                 panel.update(cx, |panel, cx| {
                     panel.inspect(
@@ -1352,7 +1428,9 @@ impl Render for ResourcePage {
             .gap_2()
             .min_w_0()
             .child(div().flex_1().max_w(px(450.)).min_w(px(90.)).child(filter))
-            .when(resource.namespaced, |toolbar| toolbar.child(namespaces))
+            .when(resource.namespaced, |toolbar| {
+                toolbar.child(self.namespace_filter(cx))
+            })
             .when_some(phase_filter, |d, f| d.child(f))
             .child(div().flex_1())
             .child(refresh)

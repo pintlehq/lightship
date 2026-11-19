@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 512 512" fill="none" role="img" aria-labelledby="lightship-title lightship-desc">
+<title id="lightship-title">Lightship</title>
+<desc id="lightship-desc">Lightship app icon for Kubernetes. Editable vector reconstruction of the selected Pintle artwork. Pure SVG paths and gradients; transparent outside the rounded-square tile.</desc>
+<defs>
+<clipPath id="ls-clip"><path d="M 132 0 H 380 C 452.902 0 512 59.098 512 132 V 380 C 512 452.902 452.902 512 380 512 H 132 C 59.098 512 0 452.902 0 380 V 132 C 0 59.098 59.098 0 132 0 Z"/></clipPath>
+<linearGradient id="ls-bg" gradientUnits="userSpaceOnUse" x1="30" y1="0" x2="420" y2="512"><stop offset="0" stop-color="#4dd4f4"/><stop offset=".31" stop-color="#009fff"/><stop offset=".61" stop-color="#0075f5"/><stop offset="1" stop-color="#0738bb"/></linearGradient>
+<radialGradient id="ls-sky" gradientUnits="userSpaceOnUse" cx="360" cy="75" r="390"><stop offset="0" stop-color="#028aff" stop-opacity=".72"/><stop offset="1" stop-color="#028aff" stop-opacity="0"/></radialGradient>
+<linearGradient id="ls-beam-left" gradientUnits="userSpaceOnUse" x1="224" y1="156" x2="0" y2="164"><stop offset="0" stop-color="#ffffff" stop-opacity=".99"/><stop offset=".2" stop-color="#edffff" stop-opacity=".95"/><stop offset="1" stop-color="#b0f3ff" stop-opacity=".29"/></linearGradient>
+<linearGradient id="ls-beam-right" gradientUnits="userSpaceOnUse" x1="288" y1="155" x2="512" y2="170"><stop offset="0" stop-color="#ffffff" stop-opacity=".97"/><stop offset=".22" stop-color="#d0f7ff" stop-opacity=".88"/><stop offset="1" stop-color="#70c5ff" stop-opacity=".29"/></linearGradient>
+<radialGradient id="ls-beacon-glow" gradientUnits="userSpaceOnUse" cx="256" cy="142" r="88"><stop offset="0" stop-color="#ffffff" stop-opacity=".72"/><stop offset=".22" stop-color="#aeeaff" stop-opacity=".38"/><stop offset="1" stop-color="#98e7ff" stop-opacity="0"/></radialGradient>
+<linearGradient id="ls-long-shadow" gradientUnits="userSpaceOnUse" x1="278" y1="197" x2="477" y2="465"><stop offset="0" stop-color="#0032a8" stop-opacity=".24"/><stop offset="1" stop-color="#00238e" stop-opacity="0"/></linearGradient>
+<linearGradient id="ls-mast" gradientUnits="userSpaceOnUse" x1="246" y1="65" x2="267" y2="100"><stop offset="0" stop-color="#ffffff"/><stop offset=".5" stop-color="#f2ffff"/><stop offset="1" stop-color="#bdeaff"/></linearGradient>
+<linearGradient id="ls-dome" gradientUnits="userSpaceOnUse" x1="238" y1="90" x2="283" y2="121"><stop offset="0" stop-color="#ffffff"/><stop offset=".42" stop-color="#f3ffff"/><stop offset="1" stop-color="#81c9f7"/></linearGradient>
+<linearGradient id="ls-cap" gradientUnits="userSpaceOnUse" x1="239" y1="114" x2="246" y2="132"><stop offset="0" stop-color="#ffffff"/><stop offset=".3" stop-color="#f1ffff"/><stop offset="1" stop-color="#70c9f4"/></linearGradient>
+<linearGradient id="ls-tower" gradientUnits="userSpaceOnUse" x1="214" y1="134" x2="304" y2="212"><stop offset="0" stop-color="#ffffff"/><stop offset=".47" stop-color="#f9ffff"/><stop offset="1" stop-color="#9bd9f9"/></linearGradient>
+<linearGradient id="ls-deck" gradientUnits="userSpaceOnUse" x1="221" y1="214" x2="286" y2="288"><stop offset="0" stop-color="#ffffff"/><stop offset=".45" stop-color="#e7f8ff"/><stop offset="1" stop-color="#82c6f5"/></linearGradient>
+<linearGradient id="ls-hull-left" gradientUnits="userSpaceOnUse" x1="179" y1="260" x2="249" y2="392"><stop offset="0" stop-color="#f6ffff"/><stop offset=".35" stop-color="#b6e9fc"/><stop offset="1" stop-color="#57baf1"/></linearGradient>
+<linearGradient id="ls-hull-right" gradientUnits="userSpaceOnUse" x1="272" y1="249" x2="302" y2="391"><stop offset="0" stop-color="#b8ebff"/><stop offset=".27" stop-color="#71c2fc"/><stop offset="1" stop-color="#0576ed"/></linearGradient>
+<linearGradient id="ls-hull-edge" gradientUnits="userSpaceOnUse" x1="155" y1="284" x2="374" y2="309"><stop offset="0" stop-color="#ffffff" stop-opacity=".94"/><stop offset=".5" stop-color="#ffffff" stop-opacity=".95"/><stop offset="1" stop-color="#c9f8ff" stop-opacity=".72"/></linearGradient>
+<linearGradient id="ls-wave-one" gradientUnits="userSpaceOnUse" x1="15" y1="378" x2="500" y2="378"><stop offset="0" stop-color="#0094ff" stop-opacity="0"/><stop offset=".13" stop-color="#52c8fa" stop-opacity=".9"/><stop offset=".29" stop-color="#e6ffff"/><stop offset=".48" stop-color="#61d3f9"/><stop offset=".64" stop-color="#77e0fc"/><stop offset=".77" stop-color="#aeedfc"/><stop offset=".92" stop-color="#268cf0" stop-opacity=".75"/><stop offset="1" stop-color="#0753cd" stop-opacity="0"/></linearGradient>
+<linearGradient id="ls-wave-two" gradientUnits="userSpaceOnUse" x1="43" y1="437" x2="478" y2="437"><stop offset="0" stop-color="#00a4ff" stop-opacity="0"/><stop offset=".2" stop-color="#25cef2"/><stop offset=".39" stop-color="#d6ffff"/><stop offset=".6" stop-color="#4cd8f4"/><stop offset=".79" stop-color="#6cc6f9"/><stop offset="1" stop-color="#155add" stop-opacity="0"/></linearGradient>
+<linearGradient id="ls-wave-highlight" gradientUnits="userSpaceOnUse" x1="38" y1="342" x2="488" y2="342"><stop offset="0" stop-color="#ffffff" stop-opacity="0"/><stop offset=".3" stop-color="#ffffff" stop-opacity=".75"/><stop offset=".52" stop-color="#ddffff" stop-opacity=".32"/><stop offset=".78" stop-color="#ffffff" stop-opacity=".65"/><stop offset="1" stop-color="#ffffff" stop-opacity="0"/></linearGradient>
+<linearGradient id="ls-edge" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="512" y2="512"><stop offset="0" stop-color="#e7ffff" stop-opacity=".65"/><stop offset=".4" stop-color="#b9ecff" stop-opacity=".16"/><stop offset="1" stop-color="#164bcb" stop-opacity=".15"/></linearGradient>
+</defs>
+<g id="lightship-artwork" clip-path="url(#ls-clip)">
+<path id="lightship-tile" d="M 132 0 H 380 C 452.902 0 512 59.098 512 132 V 380 C 512 452.902 452.902 512 380 512 H 132 C 59.098 512 0 452.902 0 380 V 132 C 0 59.098 59.098 0 132 0 Z" fill="url(#ls-bg)"/>
+<rect width="512" height="512" fill="url(#ls-sky)"/>
+<g id="beacon-light">
+<path d="M 0 75 L 226 149 L 226 176 L 0 256 Z" fill="url(#ls-beam-left)"/>
+<path d="M 287 149 L 512 75 L 512 257 L 287 176 Z" fill="url(#ls-beam-right)"/>
+<circle cx="256" cy="142" r="88" fill="url(#ls-beacon-glow)"/>
+</g>
+<path d="M 339 224 L 512 410 L 512 512 L 443 512 L 303 367 L 281 290 Z" fill="url(#ls-long-shadow)"/>
+<g id="ship-beacon">
+<rect x="245" y="65" width="23" height="40" rx="11.5" fill="url(#ls-mast)"/>
+<path d="M 216 118 C 219 101 235 90 256 90 C 277 90 293 102 296 118 Z" fill="url(#ls-dome)"/>
+<path d="M 214 130 H 298 L 322 214 H 294 L 287 177 Q 286 170 279 170 H 234 Q 227 170 226 177 L 219 214 H 192 Z" fill="url(#ls-tower)"/>
+<path d="M 214 131 L 193 213 M 298 131 L 321 213 M 226 177 Q 227 170 234 170 H 279 Q 286 170 287 177" fill="none" stroke="#efffff" stroke-opacity=".67" stroke-width="1.4"/>
+<rect x="203" y="115" width="107" height="17" rx="8.5" fill="url(#ls-cap)"/>
+<path d="M 210 116 H 302" fill="none" stroke="#ffffff" stroke-opacity=".87" stroke-width="1.1" stroke-linecap="round"/>
+</g>
+<g id="ship-deck">
+<path d="M 182 214 H 330 Q 336 214 339 224 L 356 287 L 256 249 L 157 287 L 175 223 Q 177 214 182 214 Z" fill="url(#ls-deck)"/>
+<path d="M 182 214 H 330 Q 336 214 339 224" fill="none" stroke="#ffffff" stroke-opacity=".9" stroke-width="1.5"/>
+<path d="M 256 214 V 248" fill="none" stroke="#ffffff" stroke-opacity=".6" stroke-width="1.2"/>
+</g>
+<g id="ship-hull">
+<path d="M 256 242 L 147 291 Q 133 296 138 313 L 154 372 Q 190 394 256 408 Z" fill="url(#ls-hull-left)"/>
+<path d="M 256 242 L 365 291 Q 378 296 374 312 L 358 372 Q 319 397 256 408 Z" fill="url(#ls-hull-right)"/>
+<path d="M 142 294 L 256 242 L 369 294" fill="none" stroke="url(#ls-hull-edge)" stroke-width="1.6" stroke-linejoin="round"/>
+<path d="M 256 243 V 393" fill="none" stroke="#f1ffff" stroke-opacity=".53" stroke-width="1.2"/>
+</g>
+<g id="ocean-waves">
+<path d="M 14 403 C 53 359 84 340 129 341 C 181 340 207 387 256 387 C 305 387 332 341 384 341 C 433 340 469 373 499 412 L 499 439 C 465 397 431 371 385 371 C 335 371 306 417 256 417 C 205 417 178 371 130 371 C 85 370 50 400 14 434 Z" fill="url(#ls-wave-one)"/>
+<path d="M 38 379 C 68 352 95 340 129 341 C 181 340 207 387 256 387 C 305 387 332 341 384 341 C 422 340 452 359 481 392" fill="none" stroke="url(#ls-wave-highlight)" stroke-width="1.3"/>
+<path d="M 43 457 C 75 417 104 399 134 399 C 181 399 210 445 256 445 C 303 445 334 399 382 399 C 424 399 455 426 479 459 L 479 486 C 450 451 422 430 384 430 C 336 430 308 475 257 475 C 208 475 178 430 134 430 C 102 430 73 451 43 483 Z" fill="url(#ls-wave-two)"/>
+<path d="M 68 430 C 88 411 110 399 134 399 C 181 399 210 445 256 445 C 303 445 334 399 382 399 C 417 399 445 418 467 443" fill="none" stroke="url(#ls-wave-highlight)" stroke-width="1.1" opacity=".66"/>
+</g>
+<path d="M 132 0 H 380 C 452.902 0 512 59.098 512 132 V 380 C 512 452.902 452.902 512 380 512 H 132 C 59.098 512 0 452.902 0 380 V 132 C 0 59.098 59.098 0 132 0 Z" fill="none" stroke="url(#ls-edge)" stroke-width="1.8"/>
+</g>
+</svg>

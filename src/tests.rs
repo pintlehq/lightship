@@ -77,31 +77,96 @@ fn onboarding_has_no_demo_or_mutation_controls(cx: &mut TestAppContext) {
     });
 }
 #[gpui_kit::test]
-fn clusters_and_editor_use_the_left_edge(cx: &mut TestAppContext) {
+fn settings_opens_in_place_and_closes_on_escape_with_motion_enabled(cx: &mut TestAppContext) {
     let (handle, app) = open(cx);
-    let sidebar_key = if cfg!(target_os = "macos") {
-        "cmd-b"
+    cx.update(|cx| cx.set_reduce_motion(false));
+    let focus = cx.update(|cx| active_page(&app, cx).focus_handle(cx));
+    let first = cx
+        .update_window(handle, |_, window, cx| {
+            focus.focus(window, cx);
+            app.update(cx, |this, cx| this.settings(window, cx));
+            window.render_frame(cx);
+            window.find("surface").bounds()
+        })
+        .unwrap();
+    cx.background_executor
+        .advance_clock(std::time::Duration::from_millis(300));
+    step(cx, handle, |window, cx| {
+        assert_eq!(window.find("surface").bounds(), first);
+        window.press("escape", cx);
+        assert!(window.find_all("surface").is_empty());
+    });
+    cx.background_executor
+        .advance_clock(std::time::Duration::from_millis(300));
+    step(cx, handle, |window, cx| {
+        assert!(focus.contains_focused(window, cx))
+    });
+}
+
+#[gpui_kit::test]
+fn rounded_regions_resize_and_reclaim_their_gutters(cx: &mut TestAppContext) {
+    let (handle, app) = open(cx);
+    let (sidebar_key, panel_key) = if cfg!(target_os = "macos") {
+        ("cmd-b", "cmd-j")
     } else {
-        "ctrl-b"
+        ("ctrl-b", "ctrl-j")
     };
     step(cx, handle, |window, cx| {
+        let sidebar = window.find("lightship-sidebar").bounds();
+        let editor = window.find("lightship-editor").bounds();
+        let status = window.find("workspace-status").bounds();
         assert!(window.find_all("activity-bar").is_empty());
-        assert_eq!(window.find("lightship-sidebar").bounds().left(), px(0.));
-        app.update(cx, |app, cx| app.toggle_panel(window, cx));
+        assert_eq!(sidebar.left(), px(4.));
+        assert_eq!(editor.top(), sidebar.top());
+        assert_eq!(editor.bottom(), status.top() - px(4.));
+        assert_eq!(editor.right(), window.viewport_size().width - px(4.));
+        assert_eq!(editor.left() - sidebar.right(), px(6.));
+        let divider = point(sidebar.right() + px(3.), sidebar.center().y);
+        window.drag(divider, divider + point(px(45.), px(0.)), cx);
+        let resized = window.find("lightship-sidebar").bounds();
+        assert!((resized.size.width - sidebar.size.width - px(45.)).abs() < px(2.));
         active_page(&app, cx).focus_handle(cx).focus(window, cx);
+        window.press(panel_key, cx);
+    });
+    step(cx, handle, |window, cx| {
+        let panel = window.find("lightship-panel").bounds();
+        let editor = window.find("lightship-editor").bounds();
+        assert_eq!(panel.left(), editor.left());
+        assert_eq!(panel.right(), editor.right());
+        assert_eq!(panel.top() - editor.bottom(), px(6.));
+        let divider = point(panel.center().x, panel.top() - px(3.));
+        window.drag(divider, divider - point(px(0.), px(34.)), cx);
+        let resized = window.find("lightship-panel").bounds();
+        assert!((resized.size.height - panel.size.height - px(34.)).abs() < px(2.));
         window.press(sidebar_key, cx);
     });
     step(cx, handle, |window, cx| {
         assert!(window.find_all("lightship-sidebar").is_empty());
-        assert_eq!(window.find("lightship-panel").bounds().left(), px(0.));
+        assert_eq!(window.find("lightship-panel").bounds().left(), px(4.));
+        assert_eq!(window.find("lightship-editor").bounds().left(), px(4.));
+        window.press(panel_key, cx);
         window.press(sidebar_key, cx);
     });
     step(cx, handle, |window, cx| {
-        assert_eq!(window.find("lightship-sidebar").bounds().left(), px(0.));
+        assert!(window.find_all("lightship-panel").is_empty());
+        let editor = window.find("lightship-editor").bounds();
+        assert_eq!(
+            editor.bottom(),
+            window.find("workspace-status").bounds().top() - px(4.)
+        );
+        assert_eq!(
+            editor.left() - window.find("lightship-sidebar").bounds().right(),
+            px(6.)
+        );
+        assert!(
+            active_page(&app, cx)
+                .focus_handle(cx)
+                .contains_focused(window, cx)
+        );
         window.click("command-search", cx);
     });
     step(cx, handle, |window, _| {
-        assert!(!window.find_all("workspace-command-palette").is_empty());
+        assert!(!window.find_all("workspace-command-palette").is_empty())
     });
 }
 #[gpui_kit::test]
@@ -128,7 +193,7 @@ fn selection_filter_numeric_sort_and_copy(cx: &mut TestAppContext) {
         );
         table.update(cx, |table, cx| {
             let rows = table.delegate_mut();
-            rows.namespace = Some("apps".into());
+            rows.namespaces.insert("apps".into());
             rows.query = "API".into();
             rows.sort = Some((3, ColumnSort::Descending));
             rows.rebuild();
@@ -146,6 +211,149 @@ fn selection_filter_numeric_sort_and_copy(cx: &mut TestAppContext) {
         assert!(table.read(cx).delegate().selected.is_empty());
     });
 }
+#[gpui_kit::test]
+fn namespace_checkboxes_filter_immediately_and_names_select_exclusively(cx: &mut TestAppContext) {
+    let (handle, app) = open(cx);
+    let table = cx.update(|cx| active_page(&app, cx).read(cx).table.clone());
+    step(cx, handle, |window, cx| {
+        window.click("namespace-filter", cx);
+        assert_eq!(window.find("namespace-check:*").checked(), Some(true));
+        assert_eq!(window.find("namespace-check:apps").checked(), Some(false));
+        window.click("namespace-check:apps", cx);
+        assert_eq!(
+            window.find("namespace-filter").label(),
+            Some("Namespace: apps")
+        );
+        assert_eq!(table.read(cx).delegate().visible.len(), 7);
+        window.click("namespace-check:monitoring", cx);
+        assert_eq!(window.find("namespace-check:apps").checked(), Some(true));
+        assert_eq!(
+            window.find("namespace-check:monitoring").checked(),
+            Some(true)
+        );
+        assert_eq!(window.find("namespace-check:*").checked(), Some(false));
+        assert_eq!(
+            window.find("namespace-filter").label(),
+            Some("Namespaces: 2")
+        );
+        let rows = table.read(cx).delegate();
+        assert_eq!(rows.visible.len(), 14);
+        assert!(rows.visible.iter().all(|i| matches!(
+            rows.rows[*i].namespace.as_deref(),
+            Some("apps" | "monitoring")
+        )));
+        window.click("namespace-only:monitoring", cx);
+        assert!(window.find_all("namespace-options").is_empty());
+        assert_eq!(
+            table.read(cx).delegate().single_namespace(),
+            Some("monitoring")
+        );
+        window.click("namespace-filter", cx);
+        window.click("namespace-check:monitoring", cx);
+        assert_eq!(window.find("namespace-check:*").checked(), Some(true));
+        assert_eq!(table.read(cx).delegate().visible.len(), 29);
+        window.click("namespace-check:apps", cx);
+        window.click("namespace-check:*", cx);
+        assert_eq!(window.find("namespace-check:apps").checked(), Some(false));
+        window.click("namespace-check:apps", cx);
+        table.update(cx, |t, cx| {
+            t.delegate_mut().replace(backend::Snapshot {
+                objects: vec![],
+                status: "Connected".into(),
+            });
+            cx.notify();
+        });
+    });
+    step(cx, handle, |window, cx| {
+        assert_eq!(window.find("namespace-check:apps").checked(), Some(true));
+        assert!(window.find_all("namespace-check:monitoring").is_empty());
+        window.click("namespace-only:*", cx);
+        assert!(window.find_all("namespace-options").is_empty());
+        assert_eq!(
+            window.find("namespace-filter").label(),
+            Some("Namespace: all")
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn pod_namespace_selection_combines_with_search_and_status(cx: &mut TestAppContext) {
+    let (handle, app) = open(cx);
+    step(cx, handle, |window, cx| {
+        let doc = catalog::RESOURCES
+            .iter()
+            .find(|r| r.key == "pods")
+            .unwrap()
+            .document("Development");
+        app.read(cx)
+            .workspace
+            .clone()
+            .update(cx, |ws, cx| ws.open(doc, OpenMode::Permanent, window, cx));
+        seed(&active_page(&app, cx), cx);
+    });
+    step(cx, handle, |window, cx| {
+        window.click("namespace-filter", cx);
+        window.click("namespace-check:monitoring", cx);
+        window.click("namespace-check:apps", cx);
+        window.press("escape", cx);
+        window.click("table-filter", cx);
+        window.input("monitoring", cx);
+    });
+    step(cx, handle, |window, cx| {
+        assert_eq!(
+            active_page(&app, cx)
+                .read(cx)
+                .table
+                .read(cx)
+                .delegate()
+                .query,
+            "monitoring"
+        );
+        window.click("status-filter", cx);
+        let mut menu = window.within("popup-menu");
+        assert_eq!(menu.find(2usize).label(), Some("Running"));
+        menu.click(2usize, cx);
+        let page = active_page(&app, cx);
+        let rows = page.read(cx).table.read(cx).delegate();
+        assert_eq!(rows.namespaces.len(), 2);
+        assert_eq!(rows.visible.len(), 1);
+        let result = &rows.rows[rows.visible[0]];
+        assert_eq!(result.namespace.as_deref(), Some("monitoring"));
+        assert!(result.healthy);
+    });
+}
+
+#[gpui_kit::test]
+fn multiple_namespaces_open_unscoped_yaml_from_toolbar_and_command(cx: &mut TestAppContext) {
+    let (handle, app) = open(cx);
+    let workspace = cx.update(|cx| app.read(cx).workspace.clone());
+    let resources = cx.update(|cx| workspace.read(cx).active_view(cx).unwrap());
+    step(cx, handle, |window, cx| {
+        window.click("namespace-filter", cx);
+        window.click("namespace-check:apps", cx);
+        window.click("namespace-check:monitoring", cx);
+        window.press("escape", cx);
+        window.click("apply-yaml", cx);
+    });
+    for command in [false, true] {
+        step(cx, handle, |window, cx| {
+            if command {
+                workspace.update(cx, |ws, cx| ws.select(resources, window, cx));
+                app.update(cx, |app, cx| app.apply_yaml(window, cx));
+            }
+            let ws = workspace.read(cx);
+            assert_eq!(
+                ws.document(ws.active_view(cx).unwrap(), cx)
+                    .unwrap()
+                    .key
+                    .0
+                    .as_ref(),
+                "Development/apply-yaml:_"
+            );
+        });
+    }
+}
+
 #[gpui_kit::test]
 fn independent_split_preview_permanent_and_retained_state(cx: &mut TestAppContext) {
     let (handle, app) = open(cx);
@@ -182,7 +390,8 @@ fn independent_split_preview_permanent_and_retained_state(cx: &mut TestAppContex
         });
         assert!(!workspace.read(cx).is_preview(view, cx));
         seed(&page, cx);
-        page.update(cx, |p, cx| p.set_namespace(Some("apps".into()), cx));
+        window.click("namespace-filter", cx);
+        window.click("namespace-only:apps", cx);
         workspace.update(cx, |w, cx| w.split(view, SplitDirection::Right, window, cx));
     });
     step(cx, handle, |_, cx| {
@@ -194,11 +403,11 @@ fn independent_split_preview_permanent_and_retained_state(cx: &mut TestAppContex
                 .table
                 .read(cx)
                 .delegate()
-                .namespace
-                .is_none()
+                .namespaces
+                .is_empty()
         );
         assert_eq!(
-            page.read(cx).table.read(cx).delegate().namespace.as_deref(),
+            page.read(cx).table.read(cx).delegate().single_namespace(),
             Some("apps")
         );
     });
@@ -453,7 +662,7 @@ fn refresh_updates_stable_ids_and_retains_filter_sort_selection(cx: &mut TestApp
     step(cx, handle, |_, cx| {
         table.update(cx,|table,cx|{
         let rows=table.delegate_mut();let object=serde_json::json!({"metadata":{"uid":"stable","name":"app","namespace":"apps"},"spec":{"replicas":2},"status":{"readyReplicas":1}});
-        rows.replace(backend::Snapshot{objects:vec![object.clone()],status:"Read-only".into()});let id=rows.rows[0].id.clone();rows.selected.insert(id.clone());rows.query="APP".into();rows.namespace=Some("apps".into());rows.sort=Some((2,ColumnSort::Descending));
+        rows.replace(backend::Snapshot{objects:vec![object.clone()],status:"Read-only".into()});let id=rows.rows[0].id.clone();rows.selected.insert(id.clone());rows.query="APP".into();rows.namespaces.insert("apps".into());rows.sort=Some((2,ColumnSort::Descending));
         let mut changed=object;changed["status"]["readyReplicas"]=serde_json::json!(2);rows.replace(backend::Snapshot{objects:vec![changed],status:"Read-only".into()});
         assert!(rows.selected.contains(&id));assert_eq!(rows.rows[0].cells[2].text,"2/2");assert_eq!(rows.visible.len(),1);assert_eq!(rows.query,"APP");assert!(rows.sort.is_some());
         rows.replace(backend::Snapshot{objects:vec![],status:"Read-only".into()});assert!(rows.selected.is_empty());cx.notify();
@@ -491,7 +700,7 @@ fn row_click_opens_permanent_details_reuses_tab_and_retains_list(cx: &mut TestAp
         table.update(cx, |table, cx| {
             let rows = table.delegate_mut();
             rows.query = "development".into();
-            rows.namespace = Some("apps".into());
+            rows.namespaces.insert("apps".into());
             rows.sort = Some((1, ColumnSort::Descending));
             rows.rebuild();
             let id = rows.rows[rows.visible[0]].id.clone();
@@ -519,7 +728,7 @@ fn row_click_opens_permanent_details_reuses_tab_and_retains_list(cx: &mut TestAp
     step(cx, handle, |window, cx| {
         let rows = table.read(cx).delegate();
         assert_eq!(rows.query, "development");
-        assert_eq!(rows.namespace.as_deref(), Some("apps"));
+        assert_eq!(rows.single_namespace(), Some("apps"));
         assert_eq!(rows.selected.len(), 1);
         assert!(rows.sort.is_some());
         window.click(resource_cell(&page, cx), cx);
@@ -1102,7 +1311,8 @@ fn apply_yaml_toolbar_opens_permanent_document_with_namespace_and_independent_sp
     let (handle, app) = open(cx);
     let workspace = cx.update(|cx| app.read(cx).workspace.clone());
     step(cx, handle, |window, cx| {
-        active_page(&app, cx).update(cx, |page, cx| page.set_namespace(Some("apps".into()), cx));
+        window.click("namespace-filter", cx);
+        window.click("namespace-only:apps", cx);
         window.render_frame(cx);
         window.click("apply-yaml", cx);
     });
@@ -1186,6 +1396,7 @@ fn capture_desktop_fixtures() {
             });
             for screen in [
                 "start", "Overview", "Pods", "detail", "manage", "add", "settings", "terminal",
+                "split",
             ] {
                 h.update_window(handle, |_, w, cx| {
                     if w.has_active_dialog(cx) {
@@ -1278,6 +1489,24 @@ fn capture_desktop_fixtures() {
                                 p.set_test_detail(object, serde_json::json!({"items":[]}), cx)
                             });
                         }
+                        "split" => {
+                            app.update(cx, |p, cx| p.toggle_panel(w, cx));
+                            let ws = app.read(cx).workspace.clone();
+                            ws.update(cx, |ws, cx| {
+                                let pods = ws
+                                    .groups(cx)
+                                    .into_iter()
+                                    .flat_map(|g| g.views)
+                                    .find(|id| {
+                                        ws.document(*id, cx)
+                                            .is_some_and(|doc| doc.key.0.as_ref() == "e2e/pods")
+                                    })
+                                    .unwrap();
+                                ws.select(pods, w, cx);
+                                ws.split(pods, SplitDirection::Right, w, cx);
+                            });
+                            seed(&active_page(&app, cx), cx);
+                        }
                         "manage" => app.update(cx, |p, cx| p.manage_clusters(w, cx)),
                         "add" => app.update(cx, |p, cx| p.add_cluster(w, cx)),
                         "settings" => app.update(cx, |p, cx| p.settings(w, cx)),
@@ -1292,15 +1521,6 @@ fn capture_desktop_fixtures() {
                     w.render_frame(cx);
                 })
                 .unwrap();
-                if matches!(screen, "settings" | "add") {
-                    std::thread::sleep(std::time::Duration::from_millis(320));
-                    h.advance_clock(std::time::Duration::from_millis(320));
-                    h.update_window(handle, |_, w, cx| {
-                        w.refresh();
-                        w.render_frame(cx);
-                    })
-                    .unwrap();
-                }
                 h.capture_screenshot(handle)
                     .unwrap()
                     .save(dir.join(format!(

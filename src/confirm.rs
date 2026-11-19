@@ -18,7 +18,7 @@ pub fn ask(
     let title = title.to_string();
     let label = label.to_string();
     let focus = window.focused(cx);
-    window.open_dialog(cx, move |dialog, _, _| {
+    crate::desktop::open_dialog(window, cx, move |dialog, _, _| {
         let confirm = sender.clone();
         let cancel = sender.clone();
         let close = sender.clone();

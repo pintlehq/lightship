@@ -1,10 +1,22 @@
 use super::*;
 use gpui::component::{
     Disableable, Selectable, TitleBar,
+    dialog::{Dialog, DialogEntrance},
     input::{Input, InputState},
     resizable::{h_resizable, resizable_panel, v_resizable},
 };
 use gpui::{Bounds, WindowBounds, WindowOptions, point, size};
+use pintle_gpui_kit::{components::frame_resize_handle_appearance, theme::tokens::WORKBENCH_GAP};
+
+pub(super) fn open_dialog(
+    window: &mut Window,
+    cx: &mut App,
+    build: impl Fn(Dialog, &mut Window, &mut App) -> Dialog + 'static,
+) {
+    window.open_dialog(cx, move |dialog, window, cx| {
+        build(dialog.entrance(DialogEntrance::None), window, cx)
+    });
+}
 
 pub fn install_theme(cx: &mut App) {
     let mut options = theme::ThemeOptions::default();
@@ -14,10 +26,12 @@ pub fn install_theme(cx: &mut App) {
         let c = &mut config.colors;
         macro_rules! paint { ($l:literal,$d:literal; $($field:ident),+) => {$(c.$field=Some(if dark {$d} else {$l}.into());)+} }
         paint!("#ffffff","#0f0f11";background,list,list_even,tab_active,button);
-        paint!("#fafafa","#141417";sidebar,title_bar,status_bar,tab,tab_bar,table_head,table_foot,list_head);
+        paint!("#fafafa","#141417";sidebar,title_bar,status_bar,tab,table_head,table_foot,list_head);
+        paint!("#d4d4d8","#303036";tab_bar);
         paint!("#ffffff","#19191c";table,table_even,group_box,description_list_label);
         paint!("#ffffff","#1c1c1f";popover);
-        paint!("#09090b","#fafafa";foreground,button_foreground,tab_active_foreground,sidebar_foreground,popover_foreground,group_box_foreground);
+        paint!("#09090b","#fafafa";foreground,button_foreground,sidebar_foreground,popover_foreground,group_box_foreground);
+        paint!("#1e40af","#93c5fd";tab_active_foreground);
         paint!("#3f3f46","#c2c2cc";muted_foreground,table_head_foreground,tab_foreground);
         paint!("#e4e4e7","#27272a";border,sidebar_border,table_row_border,title_bar_border,status_bar_border);
         paint!("#e4e4e7","#303036";list_active,table_active,sidebar_accent,button_active);
@@ -156,16 +170,7 @@ impl Lightship {
             .border_b_1()
             .border_color(cx.theme().border)
             .child(chrome::title_content(search, actions));
-        let sidebar = div()
-            .id("lightship-sidebar")
-            .test_support()
-            .size_full()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .bg(cx.theme().sidebar)
-            .border_r_1()
-            .border_color(cx.theme().border)
+        let sidebar = chrome::frame("lightship-sidebar", cx)
             .child(
                 div()
                     .flex()
@@ -225,10 +230,8 @@ impl Lightship {
         let toggle = icon_button("toggle-panel", IconName::Terminal, "Terminal")
             .on_click(cx.listener(|this, _, w, cx| this.toggle_panel(w, cx)));
         let editor = if count == 0 {
-            div()
-                .size_full()
-                .flex()
-                .flex_col()
+            chrome::frame("lightship-editor", cx)
+                .bg(cx.theme().background)
                 .child(
                     div()
                         .h(px(36.))
@@ -255,22 +258,30 @@ impl Lightship {
                 )
                 .into_any_element()
         } else {
+            // Each dock group paints its own rounded frame.
             div()
+                .id("lightship-editor")
+                .test_support()
                 .size_full()
-                .relative()
                 .child(self.workspace.clone())
                 .into_any_element()
         };
+        // Put half the gutter on each side so the resize handle sits at its center.
+        let half_gap = WORKBENCH_GAP / 2.;
         let main = if panel_visible {
             v_resizable("lightship-panels")
                 .with_state(&self.panel_size)
-                .child(resizable_panel().child(editor))
+                .with_handle_appearance(frame_resize_handle_appearance())
+                .child(resizable_panel().child(div().size_full().pb(half_gap).child(editor)))
                 .child(
                     resizable_panel()
                         .fixed()
-                        .size(px(280.))
-                        .size_range(px(110.)..(window.viewport_size().height * 0.65))
-                        .child(self.panel(cx)),
+                        .size(px(280.) + half_gap)
+                        .size_range(
+                            (px(110.) + half_gap)
+                                ..(window.viewport_size().height * 0.65 + half_gap),
+                        )
+                        .child(div().size_full().pt(half_gap).child(self.panel(cx))),
                 )
                 .into_any_element()
         } else {
@@ -279,14 +290,18 @@ impl Lightship {
         let body = if sidebar_visible {
             h_resizable("lightship-columns")
                 .with_state(&self.sidebar_size)
+                .with_handle_appearance(frame_resize_handle_appearance())
                 .child(
                     resizable_panel()
                         .fixed()
-                        .size(px(280.))
-                        .size_range(px(200.)..(window.viewport_size().width * 0.5).min(px(600.)))
-                        .child(sidebar),
+                        .size(px(280.) + half_gap)
+                        .size_range(
+                            (px(200.) + half_gap)
+                                ..((window.viewport_size().width * 0.5).min(px(600.)) + half_gap),
+                        )
+                        .child(div().size_full().pr(half_gap).child(sidebar)),
                 )
-                .child(resizable_panel().child(main))
+                .child(resizable_panel().child(div().size_full().pl(half_gap).child(main)))
                 .into_any_element()
         } else {
             main
@@ -339,14 +354,21 @@ impl Lightship {
             .font_family(cx.theme().mono_font_family.clone())
             .text_size(px(13.))
             .child(title)
-            .child(div().flex_1().min_h_0().child(body))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .p(px(4.))
+                    .bg(cx.theme().title_bar)
+                    .child(body),
+            )
             .child(status)
             .into_any_element()
     }
     pub(super) fn settings(&self, window: &mut Window, cx: &mut Context<Self>) {
         let manager = self.connections.clone();
         let section = Rc::new(std::cell::Cell::new("appearance"));
-        window.open_dialog(cx, move |dialog, window, cx| {
+        open_dialog(window, cx, move |dialog, window, cx| {
             let active = section.get();
             let selected = manager.read(cx).settings.appearance().to_owned();
             let content = match active {
@@ -420,7 +442,7 @@ impl Lightship {
                     .flex()
                     .flex_col()
                     .gap_3()
-                    .child("Lightship GPUI")
+                    .child("Lightship")
                     .child(format!(
                         "Version {} · Rust and GPUI",
                         env!("CARGO_PKG_VERSION")

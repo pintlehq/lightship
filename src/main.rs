@@ -710,7 +710,7 @@ impl Lightship {
         cx: &mut Context<Self>,
     ) {
         let return_focus = window.focused(cx).unwrap_or_else(|| self.focus_handle(cx));
-        window.open_dialog(cx, move |dialog, window, cx| {
+        crate::desktop::open_dialog(window, cx, move |dialog, window, cx| {
             let close = form.clone();
             let return_focus = return_focus.clone();
             let footer = form.update(cx, |form, cx| form.footer(cx).into_any_element());
@@ -846,7 +846,13 @@ impl Lightship {
                 .and_then(|view| self.workspace.read(cx).page(view, cx))
                 .and_then(|p| {
                     if let Ok(page) = p.clone().downcast::<ResourcePage>() {
-                        return page.read(cx).table.read(cx).delegate().namespace.clone();
+                        return page
+                            .read(cx)
+                            .table
+                            .read(cx)
+                            .delegate()
+                            .single_namespace()
+                            .map(str::to_owned);
                     }
                     if let Ok(page) = p.downcast::<DetailPage>() {
                         return page.read(cx).target.seed["metadata"]["namespace"]
@@ -867,7 +873,7 @@ impl Lightship {
             return;
         }
         let owner = cx.entity();
-        window.open_dialog(cx, move |dialog, _, _| {
+        crate::desktop::open_dialog(window, cx, move |dialog, _, _| {
             dialog.title("Choose cluster for Apply YAML").child(
                 div()
                     .flex()
@@ -900,7 +906,7 @@ impl Lightship {
         if event.key == "logs" {
             if let Some(pods) = event.object.as_array().filter(|p| !p.is_empty()) {
                 if pods.len() > 16 {
-                    window.open_dialog(cx, |d, _, _| {
+                    crate::desktop::open_dialog(window, cx, |d, _, _| {
                         d.title("Open Pod logs")
                             .centered()
                             .child("Select up to 16 Pods to stream their logs together.")
@@ -1021,15 +1027,8 @@ impl Lightship {
         }
     }
     fn panel(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        div()
-            .id("lightship-panel")
-            .test_support()
-            .size_full()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .border_t_1()
-            .border_color(cx.theme().border)
+        chrome::frame("lightship-panel", cx)
+            .bg(cx.theme().background)
             .child(
                 chrome::panel_tabs("lightship-panel-tabs")
                     .child(

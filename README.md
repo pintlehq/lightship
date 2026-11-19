@@ -10,9 +10,10 @@ this application has a separate identity and settings directory.
 Choose **Add cluster** to automatically detect contexts from `KUBECONFIG` or
 `~/.kube/config`, or use **Choose file…** for another kubeconfig. The **paste YAML**
 tab detects contexts after you stop typing; **Load from file…** fills that editor.
-Select the contexts to import, review any credential programs, then choose
-**Add clusters**. Detection only reads configuration and never runs a credential
-program or connects to Kubernetes.
+Select the contexts to import and review any credential programs shown. Clicking
+**Add cluster** (or **Add clusters** for multiple contexts) approves those programs for
+the selected contexts. Detection only reads configuration and never runs a
+credential program or connects to Kubernetes.
 
 Previously imported contexts are disabled and marked **ADDED**, using the context,
 server and user reference rather than display name or source file. Unreadable saved
@@ -184,7 +185,7 @@ cargo build --locked
 ./scripts/bundle-macos.sh
 ```
 
-The bundle is `dist/Lightship GPUI.app`, signed ad hoc for local development, not
+The bundle is `dist/Lightship.app`, signed ad hoc for local development, not
 notarized. It never overwrites the reference application. To package a development
 build, set `LIGHTSHIP_BUILD_PROFILE=dev`. The deliverable currently targets macOS;
 other platforms have not been validated for cluster onboarding or secure storage.
